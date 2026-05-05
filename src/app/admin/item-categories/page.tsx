@@ -1,4 +1,5 @@
 import dynamic from "next/dynamic";
+import PageShell from "@/components/PageShell";
 
 const AdminItemCategories = dynamic(() => import("@/components/AdminItemCategories"));
 
@@ -8,5 +9,9 @@ export const metadata = {
 };
 
 export default function AdminItemCategoriesPage() {
-  return <AdminItemCategories />;
+  return (
+    <PageShell>
+      <AdminItemCategories />
+    </PageShell>
+  );
 }

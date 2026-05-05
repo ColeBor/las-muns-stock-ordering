@@ -1,0 +1,20 @@
+import Link from "next/link";
+import type { ReactNode } from "react";
+
+export default function PageShell({ children }: { children: ReactNode }) {
+  return (
+    <main className="min-h-screen bg-slate-950 text-slate-50">
+      <div className="mx-auto flex min-h-screen max-w-6xl flex-col px-6 py-16 sm:px-10">
+        <nav className="mb-6">
+          <Link
+            href="/"
+            className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-slate-900/60 px-4 py-2 text-sm font-medium text-slate-300 transition hover:border-cyan-300 hover:text-cyan-300"
+          >
+            <span aria-hidden>←</span> Home
+          </Link>
+        </nav>
+        {children}
+      </div>
+    </main>
+  );
+}
