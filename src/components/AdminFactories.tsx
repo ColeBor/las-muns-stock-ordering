@@ -3,9 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { AgGridReact } from "ag-grid-react";
+import { AgGridReact } from "@/lib/agGrid";
 import type { ColDef } from "ag-grid-community";
-import "@/lib/agGrid";
 import "ag-grid-community/styles/ag-grid.css";
 import "ag-grid-community/styles/ag-theme-alpine.css";
 
