@@ -106,6 +106,12 @@ export default function Home() {
                 >
                   Allocation overrides
                 </a>
+                <a
+                  href="/admin/allocations"
+                  className="inline-flex w-full items-center justify-center rounded-full bg-emerald-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 sm:w-auto"
+                >
+                  Run allocations
+                </a>
               </div>
             </div>
 
