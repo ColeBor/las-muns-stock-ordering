@@ -6,19 +6,13 @@ import { supabase } from "@/lib/supabaseClient";
 
 const ROLE_CACHE_KEY = "lm-cached-role";
 
-function readCachedRole(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return localStorage.getItem(ROLE_CACHE_KEY);
-  } catch {
-    return null;
-  }
-}
-
 export default function HomeAdminLinks() {
-  const [isHQAdmin, setIsHQAdmin] = useState(() => readCachedRole() === "hq_admin");
+  const [isHQAdmin, setIsHQAdmin] = useState(false);
 
   useEffect(() => {
+    const cached = localStorage.getItem(ROLE_CACHE_KEY);
+    if (cached === "hq_admin") setIsHQAdmin(true);
+
     let active = true;
 
     const refresh = async () => {
