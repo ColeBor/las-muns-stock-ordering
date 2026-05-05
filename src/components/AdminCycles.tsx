@@ -683,7 +683,7 @@ function AllocationsTab({ cycleId }: { cycleId: string }) {
     const { data } = await supabase
       .from("allocations")
       .select(
-        "qty,source,shortfall,stores(name),items(sku,name),factories(name)",
+        "qty,source,shortfall,stores(name),items(sku,name),factories!allocations_factory_id_fkey(name)",
       )
       .eq("cycle_id", cycleId);
     if (data) {
