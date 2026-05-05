@@ -16,11 +16,17 @@ type Store = {
   name: string;
 };
 
+type Factory = {
+  id: string;
+  name: string;
+};
+
 export default function SupabaseAuth() {
   const [session, setSession] = useState<Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"] | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [allProfiles, setAllProfiles] = useState<Profile[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
+  const [factories, setFactories] = useState<Factory[]>([]);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [usePassword, setUsePassword] = useState(true);
@@ -77,21 +83,27 @@ export default function SupabaseAuth() {
     if (!isHQAdmin) {
       setAllProfiles([]);
       setStores([]);
+      setFactories([]);
       return;
     }
 
     const loadAdminData = async () => {
-      const [{ data: storesData, error: storesError }, { data: profilesData, error: profilesError }] = await Promise.all([
+      const [storesRes, factoriesRes, profilesRes] = await Promise.all([
         supabase.from("stores").select("id,name").order("name"),
+        supabase.from("factories").select("id,name").order("name"),
         supabase.from("profiles").select("id,role,store_id,factory_id"),
       ]);
 
-      if (!storesError && storesData) {
-        setStores(storesData as Store[]);
+      if (!storesRes.error && storesRes.data) {
+        setStores(storesRes.data as Store[]);
       }
 
-      if (!profilesError && profilesData) {
-        setAllProfiles(profilesData as Profile[]);
+      if (!factoriesRes.error && factoriesRes.data) {
+        setFactories(factoriesRes.data as Factory[]);
+      }
+
+      if (!profilesRes.error && profilesRes.data) {
+        setAllProfiles(profilesRes.data as Profile[]);
       }
     };
 
@@ -143,13 +155,22 @@ export default function SupabaseAuth() {
     }
   };
 
-  const updateProfileAssignment = async (profileId: string, newRole: string, newStoreId: string | null) => {
+  const updateProfileAssignment = async (
+    profileId: string,
+    newRole: string,
+    newStoreId: string | null,
+    newFactoryId: string | null,
+  ) => {
     setAdminLoading(true);
     setAdminMessage(null);
 
     const { error } = await supabase
       .from("profiles")
-      .update({ role: newRole, store_id: newRole === "store_manager" ? newStoreId : null })
+      .update({
+        role: newRole,
+        store_id: newRole === "store_manager" ? newStoreId : null,
+        factory_id: newRole === "factory_user" ? newFactoryId : null,
+      })
       .eq("id", profileId);
 
     setAdminLoading(false);
@@ -226,10 +247,16 @@ export default function SupabaseAuth() {
                               value={userProfile.role ?? "store_manager"}
                               onChange={async (event) => {
                                 const newRole = event.target.value;
-                                await updateProfileAssignment(userProfile.id, newRole, userProfile.store_id);
+                                await updateProfileAssignment(
+                                  userProfile.id,
+                                  newRole,
+                                  userProfile.store_id,
+                                  userProfile.factory_id,
+                                );
                               }}
                               className="rounded-full border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none"
                             >
+                              <option value="hq_admin">HQ admin</option>
                               <option value="store_manager">Store manager</option>
                               <option value="factory_user">Factory user</option>
                             </select>
@@ -237,7 +264,12 @@ export default function SupabaseAuth() {
                               value={userProfile.store_id ?? ""}
                               onChange={async (event) => {
                                 const newStoreId = event.target.value || null;
-                                await updateProfileAssignment(userProfile.id, userProfile.role ?? "store_manager", newStoreId);
+                                await updateProfileAssignment(
+                                  userProfile.id,
+                                  userProfile.role ?? "store_manager",
+                                  newStoreId,
+                                  userProfile.factory_id,
+                                );
                               }}
                               disabled={userProfile.role !== "store_manager"}
                               className="rounded-full border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none disabled:cursor-not-allowed disabled:opacity-60"
@@ -246,6 +278,27 @@ export default function SupabaseAuth() {
                               {stores.map((store) => (
                                 <option key={store.id} value={store.id}>
                                   {store.name}
+                                </option>
+                              ))}
+                            </select>
+                            <select
+                              value={userProfile.factory_id ?? ""}
+                              onChange={async (event) => {
+                                const newFactoryId = event.target.value || null;
+                                await updateProfileAssignment(
+                                  userProfile.id,
+                                  userProfile.role ?? "store_manager",
+                                  userProfile.store_id,
+                                  newFactoryId,
+                                );
+                              }}
+                              disabled={userProfile.role !== "factory_user"}
+                              className="rounded-full border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              <option value="">Unassigned factory</option>
+                              {factories.map((factory) => (
+                                <option key={factory.id} value={factory.id}>
+                                  {factory.name}
                                 </option>
                               ))}
                             </select>
