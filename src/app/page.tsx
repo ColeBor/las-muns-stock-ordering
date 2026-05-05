@@ -1,4 +1,6 @@
+import Link from "next/link";
 import SupabaseAuthClient from "@/components/SupabaseAuthClient";
+import HomeAdminLinks from "@/components/HomeAdminLinks";
 
 export default function Home() {
   return (
@@ -40,62 +42,16 @@ export default function Home() {
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Daily workflow</p>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    <a
+                    <Link
                       href="/store-stock-entry"
                       className="inline-flex items-center justify-center rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-slate-200"
                     >
                       Store stock entry
-                    </a>
-                    <a
-                      href="/factory-stock"
-                      className="inline-flex items-center justify-center rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
-                    >
-                      Factory stock
-                    </a>
-                    <a
-                      href="/delivery-orders"
-                      className="inline-flex items-center justify-center rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
-                    >
-                      Delivery orders
-                    </a>
+                    </Link>
                   </div>
                 </div>
 
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">HQ admin</p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <a
-                      href="/admin/stores"
-                      className="inline-flex items-center justify-center rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-slate-200"
-                    >
-                      Stores
-                    </a>
-                    <a
-                      href="/admin/factories"
-                      className="inline-flex items-center justify-center rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
-                    >
-                      Factories
-                    </a>
-                    <a
-                      href="/admin/suppliers"
-                      className="inline-flex items-center justify-center rounded-full bg-green-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-green-400"
-                    >
-                      Suppliers
-                    </a>
-                    <a
-                      href="/admin/items"
-                      className="inline-flex items-center justify-center rounded-full bg-purple-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-purple-400"
-                    >
-                      Items
-                    </a>
-                    <a
-                      href="/admin/cycles"
-                      className="inline-flex items-center justify-center rounded-full bg-yellow-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-yellow-400"
-                    >
-                      Cycles
-                    </a>
-                  </div>
-                </div>
+                <HomeAdminLinks />
               </div>
             </div>
 

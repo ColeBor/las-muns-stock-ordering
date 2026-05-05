@@ -23,6 +23,7 @@ type Factory = {
 
 export default function SupabaseAuth() {
   const [session, setSession] = useState<Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"] | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [allProfiles, setAllProfiles] = useState<Profile[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
@@ -39,12 +40,14 @@ export default function SupabaseAuth() {
     const loadSession = async () => {
       const { data } = await supabase.auth.getSession();
       setSession(data.session);
+      setSessionLoading(false);
     };
 
     loadSession();
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, sessionData) => {
       setSession(sessionData ?? null);
+      setSessionLoading(false);
     });
 
     return () => {
@@ -198,7 +201,9 @@ export default function SupabaseAuth() {
   return (
     <section className="rounded-3xl border border-white/10 bg-slate-950/90 p-6 text-sm text-slate-300 shadow-lg shadow-slate-950/20">
       <h2 className="text-xl font-semibold text-white">Authentication</h2>
-      {isSignedIn ? (
+      {sessionLoading ? (
+        <div className="mt-4 rounded-2xl bg-slate-900/90 p-4 text-slate-400">Loading…</div>
+      ) : isSignedIn ? (
         <div className="mt-4 space-y-4">
           <div className="rounded-2xl bg-slate-900/90 p-4">
             <p className="text-slate-300">Signed in as:</p>
