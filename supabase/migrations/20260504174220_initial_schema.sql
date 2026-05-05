@@ -2,6 +2,8 @@
 
 create extension if not exists pgcrypto;
 
+create type if not exists user_role as enum ('hq_admin', 'factory_user', 'store_manager');
+
 create table if not exists stores (
   id uuid primary key default gen_random_uuid(),
   name text not null unique,
@@ -31,6 +33,14 @@ create table if not exists items (
   type text not null check (type in ('manufactured','purchased')),
   supplier_id uuid references suppliers(id),
   unit text,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  role user_role not null default 'store_manager',
+  store_id uuid references stores(id),
+  factory_id uuid references factories(id),
   created_at timestamptz not null default now()
 );
 
@@ -82,6 +92,7 @@ create table if not exists stock_entries (
   store_id uuid not null references stores(id) on delete cascade,
   item_id uuid not null references items(id) on delete cascade,
   current_count integer not null default 0,
+  order_date date,
   entered_by text,
   entered_at timestamptz not null default now(),
   primary key (cycle_id, store_id, item_id)
@@ -131,3 +142,134 @@ create table if not exists sales_history (
   units_sold integer not null default 0,
   primary key (store_id, item_id, week_starting)
 );
+
+create or replace function public.is_hq_admin() returns boolean as $$
+  select exists (
+    select 1 from public.profiles where id = auth.uid()::uuid and role = 'hq_admin'
+  );
+$$ language sql stable security invoker;
+
+create or replace function public.is_factory_user() returns boolean as $$
+  select exists (
+    select 1 from public.profiles where id = auth.uid()::uuid and role = 'factory_user'
+  );
+$$ language sql stable security invoker;
+
+create or replace function public.is_store_manager() returns boolean as $$
+  select exists (
+    select 1 from public.profiles where id = auth.uid()::uuid and role = 'store_manager'
+  );
+$$ language sql stable security invoker;
+
+create or replace function public.current_store_id() returns uuid as $$
+  select store_id from public.profiles where id = auth.uid()::uuid;
+$$ language sql stable security invoker;
+
+create or replace function public.current_factory_id() returns uuid as $$
+  select factory_id from public.profiles where id = auth.uid()::uuid;
+$$ language sql stable security invoker;
+
+alter table public.profiles enable row level security;
+create policy "Profiles: HQ can select all profiles" on public.profiles for select using (
+  public.is_hq_admin() or id = auth.uid()::uuid
+);
+create policy "Profiles: can select own profile" on public.profiles for select using (
+  id = auth.uid()::uuid
+);
+create policy "Profiles: HQ can insert profiles" on public.profiles for insert with check (
+  auth.role() = 'authenticated' and (id = auth.uid()::uuid or public.is_hq_admin())
+);
+create policy "Profiles: can insert own profile" on public.profiles for insert with check (
+  id = auth.uid()::uuid
+);
+create policy "Profiles: HQ can update profiles" on public.profiles for update using (
+  public.is_hq_admin()
+) with check (
+  public.is_hq_admin()
+);
+create policy "Profiles: can update own profile" on public.profiles for update using (
+  id = auth.uid()::uuid
+) with check (
+  id = auth.uid()::uuid
+);
+
+alter table public.stores enable row level security;
+create policy "Stores: authenticated can view" on public.stores for select using (auth.role() = 'authenticated');
+create policy "Stores: HQ can manage" on public.stores for all using (public.is_hq_admin()) with check (public.is_hq_admin());
+
+alter table public.factories enable row level security;
+create policy "Factories: authenticated can view" on public.factories for select using (auth.role() = 'authenticated');
+create policy "Factories: HQ can manage" on public.factories for all using (public.is_hq_admin()) with check (public.is_hq_admin());
+
+alter table public.suppliers enable row level security;
+create policy "Suppliers: authenticated can view" on public.suppliers for select using (auth.role() = 'authenticated');
+create policy "Suppliers: HQ can manage" on public.suppliers for all using (public.is_hq_admin()) with check (public.is_hq_admin());
+
+alter table public.items enable row level security;
+create policy "Items: authenticated can view" on public.items for select using (auth.role() = 'authenticated');
+create policy "Items: HQ can manage" on public.items for all using (public.is_hq_admin()) with check (public.is_hq_admin());
+
+alter table public.store_items enable row level security;
+create policy "Store items: HQ can manage" on public.store_items for all using (public.is_hq_admin()) with check (public.is_hq_admin());
+create policy "Store items: store managers can view own store" on public.store_items for select using (
+  public.is_store_manager() and store_id = public.current_store_id()
+);
+
+alter table public.store_factories enable row level security;
+create policy "Store factories: HQ can manage" on public.store_factories for all using (public.is_hq_admin()) with check (public.is_hq_admin());
+create policy "Store factories: store managers can view own store" on public.store_factories for select using (
+  public.is_store_manager() and store_id = public.current_store_id()
+);
+
+alter table public.order_cycles enable row level security;
+create policy "Order cycles: authenticated can view" on public.order_cycles for select using (auth.role() = 'authenticated');
+create policy "Order cycles: HQ can manage" on public.order_cycles for all using (public.is_hq_admin()) with check (public.is_hq_admin());
+
+alter table public.cycle_stores enable row level security;
+create policy "Cycle stores: HQ can manage" on public.cycle_stores for all using (public.is_hq_admin()) with check (public.is_hq_admin());
+create policy "Cycle stores: store managers can view own store" on public.cycle_stores for select using (
+  public.is_store_manager() and store_id = public.current_store_id()
+);
+
+alter table public.factory_counts enable row level security;
+create policy "Factory counts: HQ can manage" on public.factory_counts for all using (public.is_hq_admin()) with check (public.is_hq_admin());
+create policy "Factory counts: factory users can manage own factory" on public.factory_counts for all using (
+  public.is_factory_user() and factory_id = public.current_factory_id()
+) with check (
+  public.is_factory_user() and factory_id = public.current_factory_id()
+);
+create policy "Factory counts: authenticated can view" on public.factory_counts for select using (auth.role() = 'authenticated');
+
+alter table public.stock_entries enable row level security;
+create policy "Stock entries: store managers can manage own store" on public.stock_entries for all using (
+  public.is_hq_admin() or (public.is_store_manager() and store_id = public.current_store_id())
+) with check (
+  public.is_hq_admin() or (public.is_store_manager() and store_id = public.current_store_id())
+);
+create policy "Stock entries: store managers can view own store" on public.stock_entries for select using (
+  public.is_hq_admin() or (public.is_store_manager() and store_id = public.current_store_id())
+);
+
+alter table public.allocations enable row level security;
+create policy "Allocations: HQ can manage" on public.allocations for all using (public.is_hq_admin()) with check (public.is_hq_admin());
+create policy "Allocations: store managers can view own store" on public.allocations for select using (
+  public.is_store_manager() and store_id = public.current_store_id()
+);
+
+alter table public.allocation_overrides enable row level security;
+create policy "Allocation overrides: HQ can manage" on public.allocation_overrides for all using (public.is_hq_admin()) with check (public.is_hq_admin());
+create policy "Allocation overrides: store managers can view own store" on public.allocation_overrides for select using (
+  public.is_store_manager() and store_id = public.current_store_id()
+);
+
+alter table public.purchase_orders enable row level security;
+create policy "Purchase orders: authenticated can view" on public.purchase_orders for select using (auth.role() = 'authenticated');
+create policy "Purchase orders: HQ can manage" on public.purchase_orders for all using (public.is_hq_admin()) with check (public.is_hq_admin());
+
+alter table public.po_lines enable row level security;
+create policy "PO lines: authenticated can view" on public.po_lines for select using (auth.role() = 'authenticated');
+create policy "PO lines: HQ can manage" on public.po_lines for all using (public.is_hq_admin()) with check (public.is_hq_admin());
+
+alter table public.sales_history enable row level security;
+create policy "Sales history: authenticated can view" on public.sales_history for select using (auth.role() = 'authenticated');
+create policy "Sales history: HQ can manage" on public.sales_history for all using (public.is_hq_admin()) with check (public.is_hq_admin());
