@@ -76,13 +76,7 @@ export default function Home() {
                 >
                   Admin items
                 </a>
-                <a
-                  href="/admin/item-categories"
-                  className="inline-flex w-full items-center justify-center rounded-full bg-orange-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-orange-400 sm:w-auto"
-                >
-                  Item categories
-                </a>
-                <a
+<a
                   href="/admin/cycles"
                   className="inline-flex w-full items-center justify-center rounded-full bg-yellow-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-yellow-400 sm:w-auto"
                 >
