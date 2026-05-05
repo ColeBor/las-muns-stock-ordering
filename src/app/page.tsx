@@ -19,81 +19,83 @@ export default function Home() {
                 </p>
               </div>
 
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <a
-                  href="#roadmap"
-                  className="inline-flex w-full items-center justify-center rounded-full bg-cyan-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 sm:w-auto"
-                >
-                  View roadmap
-                </a>
-                <a
-                  href="https://github.com/ColeBor/las-muns-stock-ordering"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex w-full items-center justify-center rounded-full border border-white/10 px-5 py-3 text-sm font-semibold text-slate-100 transition hover:border-white/20 sm:w-auto"
-                >
-                  GitHub repository
-                </a>
-                <a
-                  href="/store-stock-entry"
-                  className="inline-flex w-full items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-slate-200 sm:w-auto"
-                >
-                  Store stock entry
-                </a>
-                <a
-                  href="/factory-stock"
-                  className="inline-flex w-full items-center justify-center rounded-full bg-cyan-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 sm:w-auto"
-                >
-                  Factory stock
-                </a>
-                <a
-                  href="/delivery-orders"
-                  className="inline-flex w-full items-center justify-center rounded-full bg-cyan-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 sm:w-auto"
-                >
-                  Delivery orders
-                </a>
-                <a
-                  href="/admin/stores"
-                  className="inline-flex w-full items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-slate-200 sm:w-auto"
-                >
-                  Admin stores
-                </a>
-                <a
-                  href="/admin/factories"
-                  className="inline-flex w-full items-center justify-center rounded-full bg-cyan-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 sm:w-auto"
-                >
-                  Admin factories
-                </a>
-                <a
-                  href="/admin/suppliers"
-                  className="inline-flex w-full items-center justify-center rounded-full bg-green-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-green-400 sm:w-auto"
-                >
-                  Admin suppliers
-                </a>
-                <a
-                  href="/admin/items"
-                  className="inline-flex w-full items-center justify-center rounded-full bg-purple-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-purple-400 sm:w-auto"
-                >
-                  Admin items
-                </a>
-<a
-                  href="/admin/cycles"
-                  className="inline-flex w-full items-center justify-center rounded-full bg-yellow-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-yellow-400 sm:w-auto"
-                >
-                  Admin cycles
-                </a>
-<a
-                  href="/admin/allocation-overrides"
-                  className="inline-flex w-full items-center justify-center rounded-full bg-rose-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-rose-400 sm:w-auto"
-                >
-                  Allocation overrides
-                </a>
-                <a
-                  href="/admin/allocations"
-                  className="inline-flex w-full items-center justify-center rounded-full bg-emerald-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 sm:w-auto"
-                >
-                  Run allocations
-                </a>
+              <div className="space-y-4">
+                <div className="flex flex-wrap gap-2">
+                  <a
+                    href="#roadmap"
+                    className="inline-flex items-center justify-center rounded-full border border-white/10 px-4 py-2 text-xs font-medium text-slate-300 transition hover:border-cyan-300 hover:text-cyan-300"
+                  >
+                    View roadmap
+                  </a>
+                  <a
+                    href="https://github.com/ColeBor/las-muns-stock-ordering"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center justify-center rounded-full border border-white/10 px-4 py-2 text-xs font-medium text-slate-300 transition hover:border-cyan-300 hover:text-cyan-300"
+                  >
+                    GitHub
+                  </a>
+                </div>
+
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Daily workflow</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <a
+                      href="/store-stock-entry"
+                      className="inline-flex items-center justify-center rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-slate-200"
+                    >
+                      Store stock entry
+                    </a>
+                    <a
+                      href="/factory-stock"
+                      className="inline-flex items-center justify-center rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
+                    >
+                      Factory stock
+                    </a>
+                    <a
+                      href="/delivery-orders"
+                      className="inline-flex items-center justify-center rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
+                    >
+                      Delivery orders
+                    </a>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">HQ admin</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <a
+                      href="/admin/stores"
+                      className="inline-flex items-center justify-center rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-slate-200"
+                    >
+                      Stores
+                    </a>
+                    <a
+                      href="/admin/factories"
+                      className="inline-flex items-center justify-center rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
+                    >
+                      Factories
+                    </a>
+                    <a
+                      href="/admin/suppliers"
+                      className="inline-flex items-center justify-center rounded-full bg-green-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-green-400"
+                    >
+                      Suppliers
+                    </a>
+                    <a
+                      href="/admin/items"
+                      className="inline-flex items-center justify-center rounded-full bg-purple-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-purple-400"
+                    >
+                      Items
+                    </a>
+                    <a
+                      href="/admin/cycles"
+                      className="inline-flex items-center justify-center rounded-full bg-yellow-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-yellow-400"
+                    >
+                      Cycles
+                    </a>
+                  </div>
+                </div>
               </div>
             </div>
 
