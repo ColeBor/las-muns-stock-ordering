@@ -1,8 +1,12 @@
--- Initial Supabase database schema for Las Muns Stock Ordering
+﻿-- Initial Supabase database schema for Las Muns Stock Ordering
 
 create extension if not exists pgcrypto;
 
-create type if not exists user_role as enum ('hq_admin', 'factory_user', 'store_manager');
+do $$ begin
+  create type user_role as enum ('hq_admin', 'factory_user', 'store_manager');
+exception
+  when duplicate_object then null;
+end $$;
 
 create table if not exists stores (
   id uuid primary key default gen_random_uuid(),
@@ -170,23 +174,29 @@ create or replace function public.current_factory_id() returns uuid as $$
 $$ language sql stable security invoker;
 
 alter table public.profiles enable row level security;
+drop policy if exists "Profiles: HQ can select all profiles" on public.profiles;
 create policy "Profiles: HQ can select all profiles" on public.profiles for select using (
   public.is_hq_admin() or id = auth.uid()::uuid
 );
+drop policy if exists "Profiles: can select own profile" on public.profiles;
 create policy "Profiles: can select own profile" on public.profiles for select using (
   id = auth.uid()::uuid
 );
+drop policy if exists "Profiles: HQ can insert profiles" on public.profiles;
 create policy "Profiles: HQ can insert profiles" on public.profiles for insert with check (
   auth.role() = 'authenticated' and (id = auth.uid()::uuid or public.is_hq_admin())
 );
+drop policy if exists "Profiles: can insert own profile" on public.profiles;
 create policy "Profiles: can insert own profile" on public.profiles for insert with check (
   id = auth.uid()::uuid
 );
+drop policy if exists "Profiles: HQ can update profiles" on public.profiles;
 create policy "Profiles: HQ can update profiles" on public.profiles for update using (
   public.is_hq_admin()
 ) with check (
   public.is_hq_admin()
 );
+drop policy if exists "Profiles: can update own profile" on public.profiles;
 create policy "Profiles: can update own profile" on public.profiles for update using (
   id = auth.uid()::uuid
 ) with check (
@@ -194,82 +204,113 @@ create policy "Profiles: can update own profile" on public.profiles for update u
 );
 
 alter table public.stores enable row level security;
+drop policy if exists "Stores: authenticated can view" on public.stores;
 create policy "Stores: authenticated can view" on public.stores for select using (auth.role() = 'authenticated');
+drop policy if exists "Stores: HQ can manage" on public.stores;
 create policy "Stores: HQ can manage" on public.stores for all using (public.is_hq_admin()) with check (public.is_hq_admin());
 
 alter table public.factories enable row level security;
+drop policy if exists "Factories: authenticated can view" on public.factories;
 create policy "Factories: authenticated can view" on public.factories for select using (auth.role() = 'authenticated');
+drop policy if exists "Factories: HQ can manage" on public.factories;
 create policy "Factories: HQ can manage" on public.factories for all using (public.is_hq_admin()) with check (public.is_hq_admin());
 
 alter table public.suppliers enable row level security;
+drop policy if exists "Suppliers: authenticated can view" on public.suppliers;
 create policy "Suppliers: authenticated can view" on public.suppliers for select using (auth.role() = 'authenticated');
+drop policy if exists "Suppliers: HQ can manage" on public.suppliers;
 create policy "Suppliers: HQ can manage" on public.suppliers for all using (public.is_hq_admin()) with check (public.is_hq_admin());
 
 alter table public.items enable row level security;
+drop policy if exists "Items: authenticated can view" on public.items;
 create policy "Items: authenticated can view" on public.items for select using (auth.role() = 'authenticated');
+drop policy if exists "Items: HQ can manage" on public.items;
 create policy "Items: HQ can manage" on public.items for all using (public.is_hq_admin()) with check (public.is_hq_admin());
 
 alter table public.store_items enable row level security;
+drop policy if exists "Store items: HQ can manage" on public.store_items;
 create policy "Store items: HQ can manage" on public.store_items for all using (public.is_hq_admin()) with check (public.is_hq_admin());
+drop policy if exists "Store items: store managers can view own store" on public.store_items;
 create policy "Store items: store managers can view own store" on public.store_items for select using (
   public.is_store_manager() and store_id = public.current_store_id()
 );
 
 alter table public.store_factories enable row level security;
+drop policy if exists "Store factories: HQ can manage" on public.store_factories;
 create policy "Store factories: HQ can manage" on public.store_factories for all using (public.is_hq_admin()) with check (public.is_hq_admin());
+drop policy if exists "Store factories: store managers can view own store" on public.store_factories;
 create policy "Store factories: store managers can view own store" on public.store_factories for select using (
   public.is_store_manager() and store_id = public.current_store_id()
 );
 
 alter table public.order_cycles enable row level security;
+drop policy if exists "Order cycles: authenticated can view" on public.order_cycles;
 create policy "Order cycles: authenticated can view" on public.order_cycles for select using (auth.role() = 'authenticated');
+drop policy if exists "Order cycles: HQ can manage" on public.order_cycles;
 create policy "Order cycles: HQ can manage" on public.order_cycles for all using (public.is_hq_admin()) with check (public.is_hq_admin());
 
 alter table public.cycle_stores enable row level security;
+drop policy if exists "Cycle stores: HQ can manage" on public.cycle_stores;
 create policy "Cycle stores: HQ can manage" on public.cycle_stores for all using (public.is_hq_admin()) with check (public.is_hq_admin());
+drop policy if exists "Cycle stores: store managers can view own store" on public.cycle_stores;
 create policy "Cycle stores: store managers can view own store" on public.cycle_stores for select using (
   public.is_store_manager() and store_id = public.current_store_id()
 );
 
 alter table public.factory_counts enable row level security;
+drop policy if exists "Factory counts: HQ can manage" on public.factory_counts;
 create policy "Factory counts: HQ can manage" on public.factory_counts for all using (public.is_hq_admin()) with check (public.is_hq_admin());
+drop policy if exists "Factory counts: factory users can manage own factory" on public.factory_counts;
 create policy "Factory counts: factory users can manage own factory" on public.factory_counts for all using (
   public.is_factory_user() and factory_id = public.current_factory_id()
 ) with check (
   public.is_factory_user() and factory_id = public.current_factory_id()
 );
+drop policy if exists "Factory counts: authenticated can view" on public.factory_counts;
 create policy "Factory counts: authenticated can view" on public.factory_counts for select using (auth.role() = 'authenticated');
 
 alter table public.stock_entries enable row level security;
+drop policy if exists "Stock entries: store managers can manage own store" on public.stock_entries;
 create policy "Stock entries: store managers can manage own store" on public.stock_entries for all using (
   public.is_hq_admin() or (public.is_store_manager() and store_id = public.current_store_id())
 ) with check (
   public.is_hq_admin() or (public.is_store_manager() and store_id = public.current_store_id())
 );
+drop policy if exists "Stock entries: store managers can view own store" on public.stock_entries;
 create policy "Stock entries: store managers can view own store" on public.stock_entries for select using (
   public.is_hq_admin() or (public.is_store_manager() and store_id = public.current_store_id())
 );
 
 alter table public.allocations enable row level security;
+drop policy if exists "Allocations: HQ can manage" on public.allocations;
 create policy "Allocations: HQ can manage" on public.allocations for all using (public.is_hq_admin()) with check (public.is_hq_admin());
+drop policy if exists "Allocations: store managers can view own store" on public.allocations;
 create policy "Allocations: store managers can view own store" on public.allocations for select using (
   public.is_store_manager() and store_id = public.current_store_id()
 );
 
 alter table public.allocation_overrides enable row level security;
+drop policy if exists "Allocation overrides: HQ can manage" on public.allocation_overrides;
 create policy "Allocation overrides: HQ can manage" on public.allocation_overrides for all using (public.is_hq_admin()) with check (public.is_hq_admin());
+drop policy if exists "Allocation overrides: store managers can view own store" on public.allocation_overrides;
 create policy "Allocation overrides: store managers can view own store" on public.allocation_overrides for select using (
   public.is_store_manager() and store_id = public.current_store_id()
 );
 
 alter table public.purchase_orders enable row level security;
+drop policy if exists "Purchase orders: authenticated can view" on public.purchase_orders;
 create policy "Purchase orders: authenticated can view" on public.purchase_orders for select using (auth.role() = 'authenticated');
+drop policy if exists "Purchase orders: HQ can manage" on public.purchase_orders;
 create policy "Purchase orders: HQ can manage" on public.purchase_orders for all using (public.is_hq_admin()) with check (public.is_hq_admin());
 
 alter table public.po_lines enable row level security;
+drop policy if exists "PO lines: authenticated can view" on public.po_lines;
 create policy "PO lines: authenticated can view" on public.po_lines for select using (auth.role() = 'authenticated');
+drop policy if exists "PO lines: HQ can manage" on public.po_lines;
 create policy "PO lines: HQ can manage" on public.po_lines for all using (public.is_hq_admin()) with check (public.is_hq_admin());
 
 alter table public.sales_history enable row level security;
+drop policy if exists "Sales history: authenticated can view" on public.sales_history;
 create policy "Sales history: authenticated can view" on public.sales_history for select using (auth.role() = 'authenticated');
+drop policy if exists "Sales history: HQ can manage" on public.sales_history;
 create policy "Sales history: HQ can manage" on public.sales_history for all using (public.is_hq_admin()) with check (public.is_hq_admin());

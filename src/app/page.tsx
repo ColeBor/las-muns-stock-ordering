@@ -88,19 +88,7 @@ export default function Home() {
                 >
                   Admin cycles
                 </a>
-                <a
-                  href="/admin/store-items"
-                  className="inline-flex w-full items-center justify-center rounded-full bg-indigo-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-indigo-400 sm:w-auto"
-                >
-                  Store-item setup
-                </a>
-                <a
-                  href="/admin/store-factories"
-                  className="inline-flex w-full items-center justify-center rounded-full bg-pink-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-pink-400 sm:w-auto"
-                >
-                  Store-factory setup
-                </a>
-                <a
+<a
                   href="/admin/allocation-overrides"
                   className="inline-flex w-full items-center justify-center rounded-full bg-rose-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-rose-400 sm:w-auto"
                 >

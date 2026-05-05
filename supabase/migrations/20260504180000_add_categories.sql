@@ -1,8 +1,17 @@
--- Add categories system for items
+﻿-- Add categories system for items
 
 -- Create meta_category and sub_category enums
-create type if not exists meta_category as enum ('Manufactured', 'Purchased');
-create type if not exists sub_category as enum ('Empanada', 'Dessert', 'Drink', 'Cleaning Supplies', 'General Supplies', 'Sauce');
+do $$ begin
+  create type meta_category as enum ('Manufactured', 'Purchased');
+exception
+  when duplicate_object then null;
+end $$;
+
+do $$ begin
+  create type sub_category as enum ('Empanada', 'Dessert', 'Drink', 'Cleaning Supplies', 'General Supplies', 'Sauce');
+exception
+  when duplicate_object then null;
+end $$;
 
 -- Add category columns to items table
 alter table if exists items
@@ -31,8 +40,10 @@ on conflict do nothing;
 -- Update RLS policies for categories table
 alter table categories enable row level security;
 
+drop policy if exists "Anyone can read categories" on categories;
 create policy "Anyone can read categories" on categories
   for select using (true);
 
+drop policy if exists "Only HQ admins can manage categories" on categories;
 create policy "Only HQ admins can manage categories" on categories
   for all using (is_hq_admin());

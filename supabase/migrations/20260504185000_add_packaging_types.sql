@@ -1,7 +1,11 @@
 -- Add packaging types and factory reserve logic
 
 -- Create packaging_type enum
-create type if not exists packaging_type as enum ('Single', 'Stack', 'Box', 'Case', 'Dozen', 'Crate', 'Bundle', 'Bulk');
+do $$ begin
+  create type packaging_type as enum ('Single', 'Stack', 'Box', 'Case', 'Dozen', 'Crate', 'Bundle', 'Bulk');
+exception
+  when duplicate_object then null;
+end $$;
 
 -- Add packaging_type column to items table
 alter table if exists items
