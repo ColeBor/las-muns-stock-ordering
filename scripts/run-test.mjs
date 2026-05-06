@@ -24,7 +24,7 @@ const action = process.argv[2];
 const { data: cycle } = await sb
   .from("order_cycles")
   .select("id")
-  .eq("name", "TEST: Allocation scenario")
+  .eq("created_by", "seed-script")
   .single();
 const cycleId = cycle.id;
 

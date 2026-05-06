@@ -20,7 +20,7 @@ const sb = createClient(
 const { data: cycles } = await sb
   .from("order_cycles")
   .select("id,name")
-  .eq("name", "TEST: Allocation scenario")
+  .eq("created_by", "seed-script")
   .single();
 
 const cycleId = cycles.id;

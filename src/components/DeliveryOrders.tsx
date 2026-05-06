@@ -12,9 +12,8 @@ type Profile = {
 
 type OrderCycle = {
   id: string;
-  name: string;
   status: string;
-  order_date: string | null;
+  order_date: string;
 };
 
 type Allocation = {
@@ -115,7 +114,7 @@ export default function DeliveryOrders() {
     const loadDeliveryData = async () => {
       setLoading(true);
       const [cycleResponse, allocationsResponse] = await Promise.all([
-        supabase.from("order_cycles").select("id,name,status,order_date").order("created_at", { ascending: false }).limit(5),
+        supabase.from("order_cycles").select("id,status,order_date").order("created_at", { ascending: false }).limit(5),
         supabase
           .from("allocations")
           .select("cycle_id,store_id,item_id,qty,factory_id,stores(name),items(name,type,sub_category)")
@@ -262,7 +261,7 @@ export default function DeliveryOrders() {
             >
               {cycles.map((cycleOption) => (
                 <option key={cycleOption.id} value={cycleOption.id}>
-                  {cycleOption.name} ({cycleOption.status.charAt(0).toUpperCase() + cycleOption.status.slice(1)})
+                  {new Date(cycleOption.order_date).toLocaleDateString()} ({cycleOption.status.charAt(0).toUpperCase() + cycleOption.status.slice(1)})
                 </option>
               ))}
             </select>

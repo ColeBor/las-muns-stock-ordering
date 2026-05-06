@@ -16,13 +16,17 @@ type Profile = {
 
 type OrderCycle = {
   id: string;
-  name: string;
   status: string;
-  order_date: string | null;
+  order_date: string;
   created_by: string | null;
   created_at: string;
   cycle_stores?: { stores: { id: string; name: string } }[];
 };
+
+const formatCycleName = (cycle: { order_date: string } | null | undefined) =>
+  cycle?.order_date
+    ? new Date(cycle.order_date).toLocaleDateString()
+    : "(no date)";
 
 type Store = {
   id: string;
@@ -39,7 +43,6 @@ export default function AdminCycles() {
   const [stores, setStores] = useState<Store[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingCycle, setEditingCycle] = useState<OrderCycle | null>(null);
-  const [name, setName] = useState("");
   const [orderDate, setOrderDate] = useState<string>("");
   const [selectedStoreIds, setSelectedStoreIds] = useState<string[]>([]);
   const [message, setMessage] = useState<string | null>(null);
@@ -127,9 +130,13 @@ export default function AdminCycles() {
     // Status is machine-driven (draft → allocated → delivered) so we never
     // include it in the upsert. Inserts let the DB default to 'draft';
     // updates leave whatever the run/finalize endpoints set.
+    if (!orderDate) {
+      setMessage("Order date is required.");
+      setLoading(false);
+      return;
+    }
     const cycleData = {
-      name: name.trim(),
-      order_date: orderDate || null,
+      order_date: orderDate,
       created_by: session?.user?.email || null,
     };
 
@@ -179,7 +186,6 @@ export default function AdminCycles() {
     setMessage(editingCycle ? "Cycle updated." : "Cycle created.");
     setShowForm(false);
     setEditingCycle(null);
-    setName("");
     setOrderDate("");
     setSelectedStoreIds([]);
     await reloadCycles();
@@ -187,7 +193,6 @@ export default function AdminCycles() {
 
   const handleEdit = (cycle: OrderCycle) => {
     setEditingCycle(cycle);
-    setName(cycle.name);
     setOrderDate(cycle.order_date ?? "");
     setSelectedStoreIds(cycle.cycle_stores?.map((cs) => cs.stores.id) || []);
     setShowForm(true);
@@ -198,7 +203,7 @@ export default function AdminCycles() {
       setMessage("Only draft cycles can be deleted.");
       return;
     }
-    if (!confirm(`Delete cycle "${cycle.name}"? This cannot be undone.`)) return;
+    if (!confirm(`Delete cycle "${formatCycleName(cycle)}"? This cannot be undone.`)) return;
     const { error } = await supabase.from("order_cycles").delete().eq("id", cycle.id);
     if (error) {
       setMessage(error.message);
@@ -231,7 +236,16 @@ export default function AdminCycles() {
   }, [cycleParam, cycles, paramHandled]);
 
   const columnDefs: ColDef<OrderCycle>[] = [
-    { headerName: "Name", field: "name", sortable: true, filter: true, flex: 2, minWidth: 150 },
+    {
+      headerName: "Cycle",
+      field: "order_date",
+      sortable: true,
+      filter: true,
+      flex: 2,
+      minWidth: 150,
+      valueFormatter: (p) =>
+        p.value ? new Date(p.value).toLocaleDateString() : "(no date)",
+    },
     {
       headerName: "Status",
       field: "status",
@@ -240,15 +254,6 @@ export default function AdminCycles() {
       width: 110,
       valueFormatter: (p) =>
         p.value ? p.value.charAt(0).toUpperCase() + p.value.slice(1) : "",
-    },
-    {
-      headerName: "Order date",
-      field: "order_date",
-      sortable: true,
-      filter: true,
-      width: 125,
-      valueFormatter: (params) =>
-        params.value ? new Date(params.value).toLocaleDateString() : "",
     },
     {
       headerName: "Stores",
@@ -311,7 +316,6 @@ export default function AdminCycles() {
             <button
               onClick={() => {
                 setEditingCycle(null);
-                setName("");
                 setOrderDate("");
                 setSelectedStoreIds([]);
                 setShowForm(true);
@@ -336,12 +340,10 @@ export default function AdminCycles() {
           {showForm && !selectedCycleId && (
             <CycleEditForm
               editing={editingCycle}
-              name={name}
               orderDate={orderDate}
               selectedStoreIds={selectedStoreIds}
               stores={stores}
               loading={loading}
-              setName={setName}
               setOrderDate={setOrderDate}
               setSelectedStoreIds={setSelectedStoreIds}
               onSubmit={handleSubmit}
@@ -353,7 +355,7 @@ export default function AdminCycles() {
             <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-semibold text-white">
-                  {selectedCycle.status === "delivered" ? "Review" : "Manage"}: {selectedCycle.name}{" "}
+                  {selectedCycle.status === "delivered" ? "Review" : "Manage"}: {formatCycleName(selectedCycle)}{" "}
                   <span className="text-sm font-normal text-slate-400">
                     ({selectedCycle.status.charAt(0).toUpperCase() + selectedCycle.status.slice(1)})
                   </span>
@@ -396,13 +398,11 @@ export default function AdminCycles() {
               {activeTab === "details" && (
                 <CycleEditForm
                   editing={editingCycle}
-                  name={name}
                   orderDate={orderDate}
                   selectedStoreIds={selectedStoreIds}
                   stores={stores}
                   loading={loading}
                   readOnly={selectedCycle.status === "delivered"}
-                  setName={setName}
                   setOrderDate={setOrderDate}
                   setSelectedStoreIds={setSelectedStoreIds}
                   onSubmit={handleSubmit}
@@ -435,13 +435,11 @@ export default function AdminCycles() {
 
 function CycleEditForm(props: {
   editing: OrderCycle | null;
-  name: string;
   orderDate: string;
   selectedStoreIds: string[];
   stores: Store[];
   loading: boolean;
   readOnly?: boolean;
-  setName: (v: string) => void;
   setOrderDate: (v: string) => void;
   setSelectedStoreIds: (v: string[]) => void;
   onSubmit: (e: FormEvent<HTMLFormElement>) => void;
@@ -457,18 +455,6 @@ function CycleEditForm(props: {
             ? "Edit Cycle"
             : "Create New Cycle"}
       </h3>
-
-      <div>
-        <label className="block text-sm font-medium text-slate-300">Cycle Name</label>
-        <input
-          type="text"
-          value={props.name}
-          onChange={(e) => props.setName(e.target.value)}
-          disabled={ro}
-          className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400 disabled:opacity-60 disabled:cursor-not-allowed"
-          required
-        />
-      </div>
 
       <div>
         <label className="block text-sm font-medium text-slate-300">Order date</label>

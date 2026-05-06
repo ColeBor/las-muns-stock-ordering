@@ -19,9 +19,8 @@ type Store = {
 
 type OrderCycle = {
   id: string;
-  name: string;
   status: string;
-  order_date: string | null;
+  order_date: string;
 };
 
 type StoreItem = {
@@ -201,12 +200,12 @@ export default function StoreStockEntry() {
         supabase.from("stores").select("id,name").eq("id", effectiveStoreId).single(),
         supabase
           .from("order_cycles")
-          .select("id,name,status,order_date")
+          .select("id,status,order_date")
           .neq("status", "delivered")
           .order("created_at", { ascending: false }),
         supabase
           .from("order_cycles")
-          .select("id,name,status,order_date")
+          .select("id,status,order_date")
           .eq("status", "delivered")
           .order("created_at", { ascending: false })
           .limit(2),
@@ -441,7 +440,7 @@ export default function StoreStockEntry() {
               >
                 {cycles.map((cycle) => (
                   <option key={cycle.id} value={cycle.id}>
-                    {cycle.name} ({cycle.status.charAt(0).toUpperCase() + cycle.status.slice(1)})
+                    {new Date(cycle.order_date).toLocaleDateString()} ({cycle.status.charAt(0).toUpperCase() + cycle.status.slice(1)})
                   </option>
                 ))}
               </select>

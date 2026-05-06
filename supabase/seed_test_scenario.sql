@@ -5,7 +5,7 @@
 --
 -- After running:
 --   1. Sign in to the app as your HQ admin user
---   2. Go to /admin/cycles → find "TEST: Allocation scenario" → click Manage
+--   2. Go to /admin/cycles → find the cycle dated 2099-01-01 → click Manage
 --   3. Open the "Allocations" tab and click "Run allocations"
 --
 -- Expected scenario:
@@ -27,12 +27,13 @@
 
 -- ============================================================================
 -- 0. Wipe any prior TEST data so the seed is fully re-runnable.
--- order_cycles.name has no unique constraint, so re-runs without this wipe
--- would leave duplicate cycles and break the subqueries below.
+-- The seed cycle is identified by created_by = 'seed-script' since the
+-- name column was dropped; the test cycle's order_date is a sentinel
+-- (2099-01-01) so it can never collide with a real cycle.
 -- Order matters: items must go before suppliers (FK with no cascade).
 -- Cycle / store / factory deletes cascade their child rows.
 -- ============================================================================
-delete from public.order_cycles where name like 'TEST:%';
+delete from public.order_cycles where created_by = 'seed-script';
 delete from public.items         where name like 'TEST:%';
 delete from public.suppliers     where name like 'TEST:%';
 delete from public.stores        where name like 'TEST:%';
@@ -112,19 +113,19 @@ values
 -- ============================================================================
 -- 7. Cycle + cycle_stores
 -- ============================================================================
-insert into public.order_cycles (name, status, created_by)
-values ('TEST: Allocation scenario', 'draft', 'seed-script')
+insert into public.order_cycles (order_date, status, created_by)
+values ('2099-01-01', 'draft', 'seed-script')
 on conflict do nothing;
 
 -- Wipe and re-add cycle_stores so it's deterministic
 delete from public.cycle_stores
-where cycle_id = (select id from public.order_cycles where name = 'TEST: Allocation scenario');
+where cycle_id = (select id from public.order_cycles where created_by = 'seed-script');
 
 -- Seed marks both stores as already finished so /api/allocations/run can be
 -- triggered without first clicking "Mark as finished" in each store's UI.
 insert into public.cycle_stores (cycle_id, store_id, finished_at)
 select
-  (select id from public.order_cycles where name = 'TEST: Allocation scenario'),
+  (select id from public.order_cycles where created_by = 'seed-script'),
   s.id,
   now()
 from public.stores s
@@ -135,11 +136,11 @@ where s.name in ('TEST: Store A', 'TEST: Store B');
 -- ============================================================================
 insert into public.factory_counts (cycle_id, factory_id, item_id, available_qty, counted_by)
 values
-  ((select id from public.order_cycles where name = 'TEST: Allocation scenario'),
+  ((select id from public.order_cycles where created_by = 'seed-script'),
    (select id from public.factories where name = 'TEST: Factory 1'),
    (select id from public.items where name = 'TEST: Manufactured Empanada'),
    10, 'seed-script'),
-  ((select id from public.order_cycles where name = 'TEST: Allocation scenario'),
+  ((select id from public.order_cycles where created_by = 'seed-script'),
    (select id from public.factories where name = 'TEST: Factory 2'),
    (select id from public.items where name = 'TEST: Manufactured Empanada'),
    5, 'seed-script')
@@ -153,20 +154,20 @@ on conflict (cycle_id, factory_id, item_id) do update
 insert into public.stock_entries (cycle_id, store_id, item_id, current_count, entered_by)
 values
   -- Store A
-  ((select id from public.order_cycles where name = 'TEST: Allocation scenario'),
+  ((select id from public.order_cycles where created_by = 'seed-script'),
    (select id from public.stores where name = 'TEST: Store A'),
    (select id from public.items where name = 'TEST: Manufactured Empanada'),
    5, 'seed-script'),
-  ((select id from public.order_cycles where name = 'TEST: Allocation scenario'),
+  ((select id from public.order_cycles where created_by = 'seed-script'),
    (select id from public.stores where name = 'TEST: Store A'),
    (select id from public.items where name = 'TEST: Purchased Drink'),
    4, 'seed-script'),
   -- Store B
-  ((select id from public.order_cycles where name = 'TEST: Allocation scenario'),
+  ((select id from public.order_cycles where created_by = 'seed-script'),
    (select id from public.stores where name = 'TEST: Store B'),
    (select id from public.items where name = 'TEST: Manufactured Empanada'),
    5, 'seed-script'),
-  ((select id from public.order_cycles where name = 'TEST: Allocation scenario'),
+  ((select id from public.order_cycles where created_by = 'seed-script'),
    (select id from public.stores where name = 'TEST: Store B'),
    (select id from public.items where name = 'TEST: Purchased Drink'),
    6, 'seed-script')
@@ -178,15 +179,15 @@ on conflict (cycle_id, store_id, item_id) do update
 -- 10. Wipe any prior allocation/PO data for this cycle so a fresh run is clean.
 -- ============================================================================
 delete from public.allocations
-where cycle_id = (select id from public.order_cycles where name = 'TEST: Allocation scenario');
+where cycle_id = (select id from public.order_cycles where created_by = 'seed-script');
 
 delete from public.purchase_orders
-where cycle_id = (select id from public.order_cycles where name = 'TEST: Allocation scenario');
+where cycle_id = (select id from public.order_cycles where created_by = 'seed-script');
 
 -- ============================================================================
 -- Confirmation: what got seeded
 -- ============================================================================
-select 'cycle' as kind, id::text as detail from public.order_cycles where name = 'TEST: Allocation scenario'
+select 'cycle' as kind, id::text as detail from public.order_cycles where created_by = 'seed-script'
 union all select 'store',     id::text from public.stores     where name like 'TEST:%'
 union all select 'factory',   id::text from public.factories  where name like 'TEST:%'
 union all select 'item',      name     from public.items      where name like 'TEST:%'
