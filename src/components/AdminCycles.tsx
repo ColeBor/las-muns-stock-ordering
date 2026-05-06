@@ -459,7 +459,14 @@ function CycleEditForm(props: {
           value={props.orderDate}
           onChange={(e) => props.setOrderDate(e.target.value)}
           onKeyDown={(e) => e.preventDefault()}
+          onClick={(e) => {
+            const el = e.currentTarget as HTMLInputElement & {
+              showPicker?: () => void;
+            };
+            el.showPicker?.();
+          }}
           disabled={ro}
+          style={{ colorScheme: "dark" }}
           className="mt-1 rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
         />
       </div>

@@ -447,15 +447,7 @@ export default function StoreStockEntry() {
             </div>
           </div>
 
-          <div className="flex items-center justify-between gap-4 flex-wrap">
-            <p className="text-sm text-slate-400">
-              Order date:{" "}
-              <span className="text-slate-200">
-                {selectedCycle?.order_date
-                  ? new Date(selectedCycle.order_date).toLocaleDateString()
-                  : "Not set — ask management to set it on the cycle"}
-              </span>
-            </p>
+          <div className="flex items-center justify-end gap-4 flex-wrap">
             {selectedCycle?.status !== "delivered" && (
               <button
                 type="button"
