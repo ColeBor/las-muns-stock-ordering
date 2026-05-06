@@ -148,7 +148,7 @@ export default function StoreStockEntry() {
     const loadStoreData = async () => {
       const [storeResponse, cycleResponse, itemsResponse, entriesResponse] = await Promise.all([
         supabase.from("stores").select("id,name").eq("id", effectiveStoreId).single(),
-        supabase.from("order_cycles").select("id,name,status,order_date").order("started_at", { ascending: false }).limit(5),
+        supabase.from("order_cycles").select("id,name,status,order_date").order("created_at", { ascending: false }).limit(5),
         supabase
           .from("store_items")
           .select("item_id,is_active,capacity,items(name,sub_category,packaging_type)")

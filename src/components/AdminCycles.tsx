@@ -17,7 +17,6 @@ type Profile = {
 type OrderCycle = {
   id: string;
   name: string;
-  started_at: string;
   status: string;
   order_date: string | null;
   created_by: string | null;
@@ -87,7 +86,7 @@ export default function AdminCycles() {
     const { data } = await supabase
       .from("order_cycles")
       .select("*, cycle_stores(stores(id, name))")
-      .order("started_at", { ascending: false });
+      .order("created_at", { ascending: false });
     if (data) setCycles(data as OrderCycle[]);
   };
 
@@ -240,14 +239,6 @@ export default function AdminCycles() {
   const columnDefs: ColDef<OrderCycle>[] = [
     { headerName: "Name", field: "name", sortable: true, filter: true, flex: 2, minWidth: 150 },
     { headerName: "Status", field: "status", sortable: true, filter: true, width: 110 },
-    {
-      headerName: "Started",
-      field: "started_at",
-      sortable: true,
-      filter: true,
-      width: 110,
-      valueFormatter: (params) => new Date(params.value).toLocaleDateString(),
-    },
     {
       headerName: "Order date",
       field: "order_date",

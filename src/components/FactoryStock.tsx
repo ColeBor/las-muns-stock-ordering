@@ -172,7 +172,7 @@ export default function FactoryStock() {
           supabase
             .from("order_cycles")
             .select("id,name,status")
-            .order("started_at", { ascending: false })
+            .order("created_at", { ascending: false })
             .limit(5),
           countsQuery,
           allocationsQuery,

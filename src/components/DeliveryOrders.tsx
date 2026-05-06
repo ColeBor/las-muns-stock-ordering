@@ -115,7 +115,7 @@ export default function DeliveryOrders() {
     const loadDeliveryData = async () => {
       setLoading(true);
       const [cycleResponse, allocationsResponse] = await Promise.all([
-        supabase.from("order_cycles").select("id,name,status,order_date").order("started_at", { ascending: false }).limit(5),
+        supabase.from("order_cycles").select("id,name,status,order_date").order("created_at", { ascending: false }).limit(5),
         supabase
           .from("allocations")
           .select("cycle_id,store_id,item_id,qty,factory_id,stores(name),items(name,type,sub_category)")

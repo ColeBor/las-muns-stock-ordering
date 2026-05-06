@@ -85,7 +85,7 @@ store_items
   activated_at, deactivated_at
 
 order_cycles
-  id, name, started_at, status, created_by
+  id, name, order_date, status, created_by, created_at
 
 cycle_stores
   cycle_id, store_id
