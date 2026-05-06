@@ -500,7 +500,8 @@ function CycleEditForm(props: {
           type="date"
           value={props.orderDate}
           onChange={(e) => props.setOrderDate(e.target.value)}
-          className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
+          onKeyDown={(e) => e.preventDefault()}
+          className="mt-1 rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400 cursor-pointer"
         />
       </div>
 
