@@ -179,6 +179,49 @@ export default function AdminItems() {
     setItems(items.filter((i) => i.id !== item.id));
   };
 
+  const handleActivateAtAllStores = async (item: Item) => {
+    const capacityInput = prompt(
+      `Activate "${item.name}" at every store. Capacity to apply:`,
+      "100",
+    );
+    if (capacityInput === null) return;
+    const capacity = parseInt(capacityInput, 10);
+    if (Number.isNaN(capacity) || capacity < 0) {
+      setMessage("Capacity must be a non-negative number.");
+      return;
+    }
+
+    const { data: storesData, error: storesErr } = await supabase
+      .from("stores")
+      .select("id");
+    if (storesErr || !storesData) {
+      setMessage(storesErr?.message ?? "Failed to load stores");
+      return;
+    }
+    if (storesData.length === 0) {
+      setMessage("No stores exist yet.");
+      return;
+    }
+
+    const rows = storesData.map((s) => ({
+      store_id: s.id,
+      item_id: item.id,
+      is_active: true,
+      capacity,
+      activated_at: new Date().toISOString(),
+    }));
+    const { error } = await supabase
+      .from("store_items")
+      .upsert(rows, { onConflict: "store_id,item_id" });
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+    setMessage(
+      `Activated "${item.name}" at ${storesData.length} store${storesData.length === 1 ? "" : "s"} with capacity ${capacity}.`,
+    );
+  };
+
   // Inline edit on the grid for the three category fields.
   const handleCellValueChanged = async (params: {
     data: Item;
@@ -251,7 +294,7 @@ export default function AdminItems() {
     },
     {
       headerName: "Actions",
-      width: 160,
+      width: 280,
       cellRenderer: (params: { data: Item }) => (
         <div className="flex gap-2">
           <button
@@ -259,6 +302,13 @@ export default function AdminItems() {
             className="px-2 py-1 text-xs bg-blue-500 text-white rounded"
           >
             Edit
+          </button>
+          <button
+            onClick={() => handleActivateAtAllStores(params.data)}
+            className="px-2 py-1 text-xs bg-emerald-500 text-slate-950 rounded font-semibold"
+            title="Upsert store_items rows for every store with is_active=true"
+          >
+            Activate at all stores
           </button>
           <button
             onClick={() => handleDelete(params.data)}
