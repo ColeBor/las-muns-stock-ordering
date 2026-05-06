@@ -85,7 +85,29 @@ async function printResult() {
   }
 }
 
-if (action === "test14") {
+async function printFactoryCounts() {
+  const { data } = await sb
+    .from("factory_counts")
+    .select("available_qty,factories(name),items(sku)")
+    .eq("cycle_id", cycleId);
+  console.log("\n=== factory_counts (post-finalize) ===");
+  for (const c of data ?? []) {
+    console.log(`${c.factories.name} / ${c.items.sku}: ${c.available_qty}`);
+  }
+}
+
+if (action === "finalize") {
+  // Run allocations first so there's something to decrement, then finalize.
+  await runAllocations();
+  const res = await fetch("http://localhost:3000/api/allocations/finalize", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cycle_id: cycleId }),
+  });
+  const json = await res.json();
+  console.log("\nFinalize response:", JSON.stringify(json, null, 2));
+  await printFactoryCounts();
+} else if (action === "test14") {
   const storeA = await getStore("TEST: Store A");
   const itemM1 = await getItem("TEST-M1");
   await sb.from("allocation_overrides").upsert(
@@ -110,6 +132,6 @@ if (action === "test14") {
 } else if (action === "result") {
   await printResult();
 } else {
-  console.error("usage: node scripts/run-test.mjs <test14|test15|result>");
+  console.error("usage: node scripts/run-test.mjs <test14|test15|finalize|result>");
   process.exit(1);
 }

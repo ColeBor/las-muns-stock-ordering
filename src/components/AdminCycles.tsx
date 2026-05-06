@@ -422,7 +422,13 @@ export default function AdminCycles() {
               )}
               {activeTab === "stockEntries" && <StockEntriesTab cycleId={selectedCycle.id} />}
               {activeTab === "factoryCounts" && <FactoryCountsTab cycleId={selectedCycle.id} />}
-              {activeTab === "allocations" && <AllocationsTab cycleId={selectedCycle.id} />}
+              {activeTab === "allocations" && (
+                <AllocationsTab
+                  cycleId={selectedCycle.id}
+                  cycleStatus={selectedCycle.status}
+                  onFinalized={reloadCycles}
+                />
+              )}
               {activeTab === "overrides" && <OverridesTab cycleId={selectedCycle.id} />}
             </div>
           )}
@@ -691,10 +697,20 @@ type AllocationRow = {
   shortfall: number;
 };
 
-function AllocationsTab({ cycleId }: { cycleId: string }) {
+function AllocationsTab({
+  cycleId,
+  cycleStatus,
+  onFinalized,
+}: {
+  cycleId: string;
+  cycleStatus: string;
+  onFinalized: () => Promise<void> | void;
+}) {
   const [rows, setRows] = useState<AllocationRow[]>([]);
   const [running, setRunning] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const isFinalized = cycleStatus === "finalized";
 
   const reload = async () => {
     const { data } = await supabase
@@ -758,6 +774,38 @@ function AllocationsTab({ cycleId }: { cycleId: string }) {
     }
   };
 
+  const finalizeCycle = async () => {
+    if (
+      !confirm(
+        "Mark this cycle as delivered? This will subtract the allocated qty from each factory_counts row and set the cycle's status to 'finalized'. The status gate prevents this from running twice, but the decrement itself is not undoable.",
+      )
+    ) {
+      return;
+    }
+    setFinalizing(true);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/allocations/finalize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cycle_id: cycleId }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setMessage(`Error: ${data.error}`);
+      } else {
+        setMessage(
+          `✅ ${data.message} — ${data.decrements_applied} factory counts decremented`,
+        );
+        await onFinalized();
+      }
+    } catch (err) {
+      setMessage(`Error: ${err instanceof Error ? err.message : "Unknown"}`);
+    } finally {
+      setFinalizing(false);
+    }
+  };
+
   const columnDefs: ColDef<AllocationRow>[] = [
     { headerName: "Store", field: "store_name", sortable: true, filter: true, width: 180 },
     { headerName: "SKU", field: "item_sku", sortable: true, filter: true, width: 120 },
@@ -777,18 +825,34 @@ function AllocationsTab({ cycleId }: { cycleId: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <p className="text-sm text-slate-400">
           Run the allocation algorithm for this cycle. Each run wipes prior
-          allocations + POs and recomputes.
+          allocations + POs and recomputes. Once the order is delivered,
+          mark it to subtract the allocated qty from factory stock.
         </p>
-        <button
-          onClick={runAllocations}
-          disabled={running}
-          className="px-4 py-2 bg-emerald-500 text-slate-950 rounded-full font-semibold disabled:opacity-50"
-        >
-          {running ? "Running..." : "Run allocations"}
-        </button>
+        <div className="flex gap-2 shrink-0">
+          <button
+            onClick={runAllocations}
+            disabled={running || isFinalized}
+            className="px-4 py-2 bg-emerald-500 text-slate-950 rounded-full font-semibold disabled:opacity-50"
+            title={isFinalized ? "Cycle is finalized — re-running allocations would invalidate the delivery decrement" : undefined}
+          >
+            {running ? "Running..." : "Run allocations"}
+          </button>
+          <button
+            onClick={finalizeCycle}
+            disabled={finalizing || isFinalized}
+            className="px-4 py-2 bg-amber-500 text-slate-950 rounded-full font-semibold disabled:opacity-50"
+            title={isFinalized ? "Already finalized" : undefined}
+          >
+            {finalizing
+              ? "Marking..."
+              : isFinalized
+                ? "Delivered ✓"
+                : "Mark delivered"}
+          </button>
+        </div>
       </div>
       {message && (
         <div
