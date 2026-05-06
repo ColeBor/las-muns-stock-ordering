@@ -118,9 +118,9 @@ export async function POST(request: NextRequest) {
   const items = (itemsRes.data ?? []) as Item[];
   const cycleStores = (cycleStoresRes.data ?? []) as CycleStore[];
 
-  // If cycle_stores has rows for this cycle, only those stores participate.
-  // Empty set means "no restriction" (every store with input is allowed).
-  const enforceCycleStores = cycleStores.length > 0;
+  // cycle_stores is the membership set: only stores listed there participate.
+  // Empty cycle_stores means nobody is in the cycle — no allocations get
+  // produced even if stock_entries or overrides exist for other stores.
   const allowedStoreIds = new Set(cycleStores.map((c) => c.store_id));
 
   // Wipe existing allocations for the cycle. allocation_factories has FK with cascade,
@@ -164,12 +164,12 @@ export async function POST(request: NextRequest) {
   // still produce an allocation — HQ can force a qty even when the store didn't enter.
   const stockEntryByKey = new Map<string, StockEntry>();
   for (const e of stockEntries) {
-    if (enforceCycleStores && !allowedStoreIds.has(e.store_id)) continue;
+    if (!allowedStoreIds.has(e.store_id)) continue;
     stockEntryByKey.set(tupleKey(e.store_id, e.item_id), e);
   }
   const overrideByKey = new Map<string, Override>();
   for (const o of overrides) {
-    if (enforceCycleStores && !allowedStoreIds.has(o.store_id)) continue;
+    if (!allowedStoreIds.has(o.store_id)) continue;
     overrideByKey.set(tupleKey(o.store_id, o.item_id), o);
   }
 
@@ -182,6 +182,19 @@ export async function POST(request: NextRequest) {
   const factorySplits: FactorySplit[] = [];
   type PurchaseLine = { supplier_id: string; item_id: string; qty: number };
   const purchaseLines: PurchaseLine[] = [];
+
+  // Manufactured items go through a priority-fair pass below. Purchased
+  // items create allocations and PO lines directly here since they don't
+  // touch factory stock.
+  type ManufacturedState = {
+    store_id: string;
+    item_id: string;
+    needed: number;
+    fulfilled: number;
+    primaryFactoryId: string | null;
+    source: AllocationRow["source"];
+  };
+  const manufacturedStates = new Map<string, ManufacturedState>();
 
   for (const key of tupleKeys) {
     const [store_id, item_id] = key.split("|");
@@ -203,39 +216,13 @@ export async function POST(request: NextRequest) {
         : "purchase";
 
     if (item.type === "manufactured") {
-      let remaining = needed;
-      let fulfilled = 0;
-      let primaryFactoryId: string | null = null;
-
-      const factories = sfByStore.get(store_id) ?? [];
-      for (const sf of factories) {
-        if (remaining === 0) break;
-        const k = availableKey(sf.factory_id, item_id);
-        const avail = availableMap.get(k) ?? 0;
-        if (avail <= 0) continue;
-        const take = Math.min(remaining, avail);
-        availableMap.set(k, avail - take);
-        if (primaryFactoryId === null) primaryFactoryId = sf.factory_id;
-        fulfilled += take;
-        remaining -= take;
-
-        factorySplits.push({
-          cycle_id: cycle_id!,
-          store_id,
-          item_id,
-          factory_id: sf.factory_id,
-          qty: take,
-        });
-      }
-
-      allocationRows.push({
-        cycle_id: cycle_id!,
+      manufacturedStates.set(key, {
         store_id,
         item_id,
-        qty: fulfilled,
+        needed,
+        fulfilled: 0,
+        primaryFactoryId: null,
         source: baseSource,
-        factory_id: primaryFactoryId,
-        shortfall: needed - fulfilled,
       });
     } else if (item.type === "purchased") {
       allocationRows.push({
@@ -256,6 +243,51 @@ export async function POST(request: NextRequest) {
         });
       }
     }
+  }
+
+  // Priority-fair manufactured allocation. Walk priority levels outermost so
+  // every priority-1 claim resolves before any priority-2 fallback. This
+  // prevents a store from sweeping a factory via secondary preference while
+  // another store with priority-1 on the same factory is still unmet.
+  const maxPriority = storeFactories.reduce(
+    (m, sf) => (sf.priority > m ? sf.priority : m),
+    0,
+  );
+  for (let p = 1; p <= maxPriority; p++) {
+    for (const sf of storeFactories) {
+      if (sf.priority !== p) continue;
+      for (const state of manufacturedStates.values()) {
+        if (state.store_id !== sf.store_id) continue;
+        const remaining = state.needed - state.fulfilled;
+        if (remaining <= 0) continue;
+        const k = availableKey(sf.factory_id, state.item_id);
+        const avail = availableMap.get(k) ?? 0;
+        if (avail <= 0) continue;
+        const take = Math.min(remaining, avail);
+        availableMap.set(k, avail - take);
+        if (state.primaryFactoryId === null) state.primaryFactoryId = sf.factory_id;
+        state.fulfilled += take;
+        factorySplits.push({
+          cycle_id: cycle_id!,
+          store_id: state.store_id,
+          item_id: state.item_id,
+          factory_id: sf.factory_id,
+          qty: take,
+        });
+      }
+    }
+  }
+
+  for (const state of manufacturedStates.values()) {
+    allocationRows.push({
+      cycle_id: cycle_id!,
+      store_id: state.store_id,
+      item_id: state.item_id,
+      qty: state.fulfilled,
+      source: state.source,
+      factory_id: state.primaryFactoryId,
+      shortfall: state.needed - state.fulfilled,
+    });
   }
 
   if (allocationRows.length > 0) {
