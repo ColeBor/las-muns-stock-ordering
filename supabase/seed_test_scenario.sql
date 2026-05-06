@@ -33,7 +33,7 @@
 -- Cycle / store / factory deletes cascade their child rows.
 -- ============================================================================
 delete from public.order_cycles where name like 'TEST:%';
-delete from public.items         where sku  like 'TEST-%';
+delete from public.items         where name like 'TEST:%';
 delete from public.suppliers     where name like 'TEST:%';
 delete from public.stores        where name like 'TEST:%';
 delete from public.factories     where name like 'TEST:%';
@@ -65,19 +65,19 @@ on conflict (name) do nothing;
 -- ============================================================================
 -- 4. Items (with categories so DeliveryOrders renders correctly)
 -- ============================================================================
-insert into public.items (sku, name, type, supplier_id, unit, meta_category, sub_category, packaging_type)
+insert into public.items (name, type, supplier_id, sub_category, packaging_type)
 values
-  ('TEST-M1', 'TEST: Manufactured Empanada', 'manufactured', null, 'unit', 'Manufactured', 'Empanada', 'Single'),
-  ('TEST-P1', 'TEST: Purchased Drink',
+  ('TEST: Manufactured Empanada', 'manufactured', null, 'Empanada', 'Single'),
+  ('TEST: Purchased Drink',
     'purchased',
     (select id from public.suppliers where name = 'TEST: Acme Foods'),
-    'unit', 'Purchased', 'Drink', 'Single')
-on conflict (sku) do nothing;
+    'Drink', 'Single')
+on conflict (name) do nothing;
 
 -- Backfill the supplier_id on the purchased item if it was inserted before the supplier existed.
 update public.items
 set supplier_id = (select id from public.suppliers where name = 'TEST: Acme Foods')
-where sku = 'TEST-P1' and supplier_id is null;
+where name = 'TEST: Purchased Drink' and supplier_id is null;
 
 -- ============================================================================
 -- 5. Store-items: activate both items at both stores with capacity 100
@@ -87,7 +87,7 @@ select s.id, i.id, true, 100, now()
 from public.stores s
 cross join public.items i
 where s.name in ('TEST: Store A', 'TEST: Store B')
-  and i.sku in ('TEST-M1', 'TEST-P1')
+  and i.name in ('TEST: Manufactured Empanada', 'TEST: Purchased Drink')
 on conflict (store_id, item_id) do update
   set is_active = true, capacity = 100, activated_at = excluded.activated_at;
 
@@ -134,11 +134,11 @@ insert into public.factory_counts (cycle_id, factory_id, item_id, available_qty,
 values
   ((select id from public.order_cycles where name = 'TEST: Allocation scenario'),
    (select id from public.factories where name = 'TEST: Factory 1'),
-   (select id from public.items where sku = 'TEST-M1'),
+   (select id from public.items where name = 'TEST: Manufactured Empanada'),
    10, 'seed-script'),
   ((select id from public.order_cycles where name = 'TEST: Allocation scenario'),
    (select id from public.factories where name = 'TEST: Factory 2'),
-   (select id from public.items where sku = 'TEST-M1'),
+   (select id from public.items where name = 'TEST: Manufactured Empanada'),
    5, 'seed-script')
 on conflict (cycle_id, factory_id, item_id) do update
   set available_qty = excluded.available_qty,
@@ -152,20 +152,20 @@ values
   -- Store A
   ((select id from public.order_cycles where name = 'TEST: Allocation scenario'),
    (select id from public.stores where name = 'TEST: Store A'),
-   (select id from public.items where sku = 'TEST-M1'),
+   (select id from public.items where name = 'TEST: Manufactured Empanada'),
    5, 'seed-script'),
   ((select id from public.order_cycles where name = 'TEST: Allocation scenario'),
    (select id from public.stores where name = 'TEST: Store A'),
-   (select id from public.items where sku = 'TEST-P1'),
+   (select id from public.items where name = 'TEST: Purchased Drink'),
    4, 'seed-script'),
   -- Store B
   ((select id from public.order_cycles where name = 'TEST: Allocation scenario'),
    (select id from public.stores where name = 'TEST: Store B'),
-   (select id from public.items where sku = 'TEST-M1'),
+   (select id from public.items where name = 'TEST: Manufactured Empanada'),
    5, 'seed-script'),
   ((select id from public.order_cycles where name = 'TEST: Allocation scenario'),
    (select id from public.stores where name = 'TEST: Store B'),
-   (select id from public.items where sku = 'TEST-P1'),
+   (select id from public.items where name = 'TEST: Purchased Drink'),
    6, 'seed-script')
 on conflict (cycle_id, store_id, item_id) do update
   set current_count = excluded.current_count,
@@ -186,5 +186,5 @@ where cycle_id = (select id from public.order_cycles where name = 'TEST: Allocat
 select 'cycle' as kind, id::text as detail from public.order_cycles where name = 'TEST: Allocation scenario'
 union all select 'store',     id::text from public.stores     where name like 'TEST:%'
 union all select 'factory',   id::text from public.factories  where name like 'TEST:%'
-union all select 'item',      sku      from public.items      where sku like 'TEST-%'
+union all select 'item',      name     from public.items      where name like 'TEST:%'
 union all select 'supplier',  id::text from public.suppliers  where name like 'TEST:%';

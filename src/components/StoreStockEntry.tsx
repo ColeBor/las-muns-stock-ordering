@@ -30,10 +30,6 @@ type StoreItem = {
   capacity: number;
   items?: {
     name: string;
-    sku: string;
-    type: string;
-    unit: string | null;
-    meta_category: string | null;
     sub_category: string | null;
     packaging_type: string | null;
   };
@@ -47,16 +43,12 @@ type StockEntry = {
   entered_at: string;
   items?: {
     name: string;
-    sku: string;
   };
 };
 
 type StockEntryRow = {
   item_id: string;
   item_name: string;
-  item_sku: string;
-  item_type: string;
-  unit: string | null;
   capacity: number;
   current_count: number;
   is_active: boolean;
@@ -159,12 +151,12 @@ export default function StoreStockEntry() {
         supabase.from("order_cycles").select("id,name,status,order_date").order("started_at", { ascending: false }).limit(5),
         supabase
           .from("store_items")
-          .select("item_id,is_active,capacity,items(name,sku,type,unit,meta_category,sub_category,packaging_type)")
+          .select("item_id,is_active,capacity,items(name,sub_category,packaging_type)")
           .eq("store_id", effectiveStoreId)
           .order("item_id"),
         supabase
           .from("stock_entries")
-          .select("cycle_id,store_id,item_id,current_count,entered_at,items(name,sku)")
+          .select("cycle_id,store_id,item_id,current_count,entered_at,items(name)")
           .eq("store_id", effectiveStoreId)
           .order("entered_at", { ascending: false }),
       ]);
@@ -212,9 +204,6 @@ export default function StoreStockEntry() {
         return {
           item_id: storeItem.item_id,
           item_name: storeItem.items?.name || storeItem.item_id,
-          item_sku: storeItem.items?.sku || "",
-          item_type: storeItem.items?.type || "",
-          unit: storeItem.items?.unit || null,
           capacity: storeItem.capacity,
           current_count: existingEntry?.current_count || 0,
           is_active: storeItem.is_active,
@@ -271,7 +260,7 @@ export default function StoreStockEntry() {
         const newEntry: StockEntry = {
           ...payload,
           entered_at: new Date().toISOString(),
-          items: { name: data.item_name, sku: data.item_sku },
+          items: { name: data.item_name },
         };
 
         setEntries(prev => {
@@ -290,10 +279,7 @@ export default function StoreStockEntry() {
 
   const columnDefs: ColDef<StockEntryRow>[] = [
     { headerName: "Category", field: "sub_category", sortable: true, filter: true, width: 140 },
-    { headerName: "SKU", field: "item_sku", sortable: true, filter: true, width: 120 },
     { headerName: "Item Name", field: "item_name", sortable: true, filter: true, width: 200 },
-    { headerName: "Type", field: "item_type", sortable: true, filter: true, width: 100 },
-    { headerName: "Unit", field: "unit", sortable: true, filter: true, width: 80 },
     { headerName: "Packaging", field: "packaging_type", sortable: true, filter: true, width: 120 },
     { headerName: "Capacity", field: "capacity", sortable: true, filter: true, width: 100 },
     {

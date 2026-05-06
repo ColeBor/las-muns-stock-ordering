@@ -558,7 +558,6 @@ function CycleEditForm(props: {
 
 type StockEntryRow = {
   store_name: string;
-  item_sku: string;
   item_name: string;
   current_count: number;
   entered_at: string;
@@ -572,7 +571,7 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
       const { data } = await supabase
         .from("stock_entries")
         .select(
-          "current_count,entered_at,entered_by,stores(name),items(sku,name)",
+          "current_count,entered_at,entered_by,stores(name),items(name)",
         )
         .eq("cycle_id", cycleId)
         .order("entered_at", { ascending: false });
@@ -583,10 +582,9 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
             entered_at: string;
             entered_by: string | null;
             stores: { name: string } | null;
-            items: { sku: string; name: string } | null;
+            items: { name: string } | null;
           }>).map((e) => ({
             store_name: e.stores?.name ?? "",
-            item_sku: e.items?.sku ?? "",
             item_name: e.items?.name ?? "",
             current_count: e.current_count,
             entered_at: e.entered_at,
@@ -600,7 +598,6 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
 
   const columnDefs: ColDef<StockEntryRow>[] = [
     { headerName: "Store", field: "store_name", sortable: true, filter: true, width: 180 },
-    { headerName: "SKU", field: "item_sku", sortable: true, filter: true, width: 120 },
     { headerName: "Item", field: "item_name", sortable: true, filter: true, width: 220 },
     { headerName: "Count", field: "current_count", sortable: true, filter: true, width: 110 },
     {
@@ -632,7 +629,6 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
 
 type FactoryCountRow = {
   factory_name: string;
-  item_sku: string;
   item_name: string;
   available_qty: number;
   counted_at: string;
@@ -646,7 +642,7 @@ function FactoryCountsTab({ cycleId }: { cycleId: string }) {
       const { data } = await supabase
         .from("factory_counts")
         .select(
-          "available_qty,counted_at,counted_by,factories(name),items(sku,name)",
+          "available_qty,counted_at,counted_by,factories(name),items(name)",
         )
         .eq("cycle_id", cycleId)
         .order("counted_at", { ascending: false });
@@ -657,10 +653,9 @@ function FactoryCountsTab({ cycleId }: { cycleId: string }) {
             counted_at: string;
             counted_by: string | null;
             factories: { name: string } | null;
-            items: { sku: string; name: string } | null;
+            items: { name: string } | null;
           }>).map((e) => ({
             factory_name: e.factories?.name ?? "",
-            item_sku: e.items?.sku ?? "",
             item_name: e.items?.name ?? "",
             available_qty: e.available_qty,
             counted_at: e.counted_at,
@@ -674,7 +669,6 @@ function FactoryCountsTab({ cycleId }: { cycleId: string }) {
 
   const columnDefs: ColDef<FactoryCountRow>[] = [
     { headerName: "Factory", field: "factory_name", sortable: true, filter: true, width: 180 },
-    { headerName: "SKU", field: "item_sku", sortable: true, filter: true, width: 120 },
     { headerName: "Item", field: "item_name", sortable: true, filter: true, width: 220 },
     { headerName: "Available", field: "available_qty", sortable: true, filter: true, width: 130 },
     {
@@ -706,7 +700,6 @@ function FactoryCountsTab({ cycleId }: { cycleId: string }) {
 
 type AllocationRow = {
   store_name: string;
-  item_sku: string;
   item_name: string;
   qty: number;
   source: string;
@@ -737,7 +730,7 @@ function AllocationsTab({
     const { data } = await supabase
       .from("allocations")
       .select(
-        "qty,source,shortfall,stores(name),items(sku,name),factories!allocations_factory_id_fkey(name)",
+        "qty,source,shortfall,stores(name),items(name),factories!allocations_factory_id_fkey(name)",
       )
       .eq("cycle_id", cycleId);
     if (data) {
@@ -747,11 +740,10 @@ function AllocationsTab({
           source: string;
           shortfall: number;
           stores: { name: string } | null;
-          items: { sku: string; name: string } | null;
+          items: { name: string } | null;
           factories: { name: string } | null;
         }>).map((a) => ({
           store_name: a.stores?.name ?? "",
-          item_sku: a.items?.sku ?? "",
           item_name: a.items?.name ?? "",
           qty: a.qty,
           source: a.source,
@@ -829,7 +821,6 @@ function AllocationsTab({
 
   const columnDefs: ColDef<AllocationRow>[] = [
     { headerName: "Store", field: "store_name", sortable: true, filter: true, width: 180 },
-    { headerName: "SKU", field: "item_sku", sortable: true, filter: true, width: 120 },
     { headerName: "Item", field: "item_name", sortable: true, filter: true, width: 200 },
     { headerName: "Qty", field: "qty", sortable: true, filter: true, width: 90 },
     { headerName: "Source", field: "source", sortable: true, filter: true, width: 130 },
@@ -911,7 +902,6 @@ type OverrideRow = {
   reason: string | null;
   set_by: string | null;
   store_name: string;
-  item_sku: string;
   item_name: string;
 };
 
@@ -920,7 +910,7 @@ function OverridesTab({ cycleId }: { cycleId: string }) {
     Array<{ cycle_id: string; store_id: string; item_id: string; qty: number; reason: string | null; set_by: string | null }>
   >([]);
   const [stores, setStores] = useState<Array<{ id: string; name: string }>>([]);
-  const [items, setItems] = useState<Array<{ id: string; name: string; sku: string }>>([]);
+  const [items, setItems] = useState<Array<{ id: string; name: string }>>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [storeId, setStoreId] = useState("");
@@ -938,7 +928,7 @@ function OverridesTab({ cycleId }: { cycleId: string }) {
         .eq("cycle_id", cycleId)
         .order("set_at", { ascending: false }),
       supabase.from("stores").select("id,name").order("name"),
-      supabase.from("items").select("id,name,sku").order("name"),
+      supabase.from("items").select("id,name").order("name"),
     ]);
     if (overridesRes.data) setOverrides(overridesRes.data);
     if (storesRes.data) setStores(storesRes.data);
@@ -960,7 +950,6 @@ function OverridesTab({ cycleId }: { cycleId: string }) {
       overrides.map((o) => ({
         ...o,
         store_name: storeNameById.get(o.store_id) ?? o.store_id,
-        item_sku: itemById.get(o.item_id)?.sku ?? "",
         item_name: itemById.get(o.item_id)?.name ?? o.item_id,
       })),
     [overrides, storeNameById, itemById],
@@ -1031,7 +1020,6 @@ function OverridesTab({ cycleId }: { cycleId: string }) {
 
   const columnDefs: ColDef<OverrideRow>[] = [
     { headerName: "Store", field: "store_name", sortable: true, filter: true, width: 180 },
-    { headerName: "SKU", field: "item_sku", sortable: true, filter: true, width: 120 },
     { headerName: "Item", field: "item_name", sortable: true, filter: true, width: 200 },
     { headerName: "Qty", field: "qty", sortable: true, filter: true, width: 100 },
     { headerName: "Reason", field: "reason", sortable: true, filter: true, flex: 1 },
@@ -1109,7 +1097,7 @@ function OverridesTab({ cycleId }: { cycleId: string }) {
               >
                 <option value="">-- select --</option>
                 {items.map((i) => (
-                  <option key={i.id} value={i.id}>{i.sku} — {i.name}</option>
+                  <option key={i.id} value={i.id}>{i.name}</option>
                 ))}
               </select>
             </div>

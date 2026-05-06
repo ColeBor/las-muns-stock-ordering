@@ -361,18 +361,14 @@ function StoreEditForm(props: {
 
 type Item = {
   id: string;
-  sku: string;
   name: string;
   type: string;
-  unit: string | null;
 };
 
 type StoreItemRow = {
   item_id: string;
-  sku: string;
   name: string;
   type: string;
-  unit: string | null;
   is_active: boolean;
   capacity: number;
 };
@@ -385,7 +381,7 @@ function StoreItemsTab({ storeId }: { storeId: string }) {
 
   const reload = async () => {
     const [itemsRes, storeItemsRes] = await Promise.all([
-      supabase.from("items").select("id,sku,name,type,unit").order("name"),
+      supabase.from("items").select("id,name,type").order("name"),
       supabase
         .from("store_items")
         .select("item_id,is_active,capacity")
@@ -405,10 +401,8 @@ function StoreItemsTab({ storeId }: { storeId: string }) {
       const si = byId.get(item.id);
       return {
         item_id: item.id,
-        sku: item.sku,
         name: item.name,
         type: item.type,
-        unit: item.unit,
         is_active: si?.is_active ?? false,
         capacity: si?.capacity ?? 0,
       };
@@ -475,10 +469,8 @@ function StoreItemsTab({ storeId }: { storeId: string }) {
   };
 
   const columnDefs: ColDef<StoreItemRow>[] = [
-    { headerName: "SKU", field: "sku", sortable: true, filter: true, width: 120 },
     { headerName: "Name", field: "name", sortable: true, filter: true, width: 220 },
     { headerName: "Type", field: "type", sortable: true, filter: true, width: 130 },
-    { headerName: "Unit", field: "unit", sortable: true, filter: true, width: 100 },
     {
       headerName: "Active",
       field: "is_active",

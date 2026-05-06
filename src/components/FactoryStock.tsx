@@ -5,6 +5,11 @@ import { supabase } from "@/lib/supabaseClient";
 import { AgGridReact } from "@/lib/agGrid";
 import type { ColDef } from "ag-grid-community";
 
+// Sentinel for the "all factories" aggregate view in the factory dropdown.
+// Selecting it shows item totals summed across every factory and disables
+// editing (you can't enter a count without specifying which factory).
+const MASTER_FACTORY = "__MASTER__";
+
 type Profile = {
   id: string;
   role: string | null;
@@ -31,10 +36,7 @@ type FactoryCount = {
   counted_at: string;
   items?: {
     name: string;
-    sku: string;
     type: string;
-    unit: string | null;
-    meta_category: string | null;
     sub_category: string | null;
   };
 };
@@ -50,15 +52,13 @@ type AllocationFactory = {
 type FactoryCountRow = {
   item_id: string;
   item_name: string;
-  item_sku: string;
   item_type: string;
-  unit: string | null;
   available_qty: number;
+  allocatable_qty: number;
   has_existing_count: boolean;
   total_allocated: number;
   remaining_after_reserve: number;
   reserve_qty: number;
-  meta_category: string | null;
   sub_category: string | null;
   packaging_type: string | null;
 };
@@ -85,7 +85,9 @@ export default function FactoryStock() {
     () => (isHQAdmin ? selectedFactoryId || null : profile?.factory_id ?? null),
     [isHQAdmin, selectedFactoryId, profile?.factory_id],
   );
+  const isMasterView = effectiveFactoryId === MASTER_FACTORY;
   const canManage = (isFactoryUser && hasAssignedFactory) || (isHQAdmin && !!effectiveFactoryId);
+  const canEdit = canManage && !isMasterView;
 
   useEffect(() => {
     const loadSession = async () => {
@@ -148,22 +150,44 @@ export default function FactoryStock() {
     }
 
     const loadFactoryData = async () => {
-      const [factoryResponse, cycleResponse, countsResponse, allocationsResponse] = await Promise.all([
-        supabase.from("factories").select("id,name").eq("id", effectiveFactoryId).single(),
-        supabase.from("order_cycles").select("id,name,status").order("started_at", { ascending: false }).limit(5),
-        supabase
-          .from("factory_counts")
-          .select("cycle_id,factory_id,item_id,available_qty,counted_at,items(name,sku,type,unit,meta_category,sub_category)")
-          .eq("factory_id", effectiveFactoryId)
-          .order("counted_at", { ascending: false }),
-        supabase
-          .from("allocation_factories")
-          .select("cycle_id,store_id,item_id,qty,factory_id")
-          .eq("factory_id", effectiveFactoryId)
-          .order("cycle_id"),
-      ]);
+      // In master view, drop the factory_id filter so we get rows across
+      // every factory for aggregation.
+      const countsQuery = supabase
+        .from("factory_counts")
+        .select(
+          "cycle_id,factory_id,item_id,available_qty,counted_at,items(name,type,sub_category)",
+        )
+        .order("counted_at", { ascending: false });
+      const allocationsQuery = supabase
+        .from("allocation_factories")
+        .select("cycle_id,store_id,item_id,qty,factory_id")
+        .order("cycle_id");
+      if (!isMasterView) {
+        countsQuery.eq("factory_id", effectiveFactoryId);
+        allocationsQuery.eq("factory_id", effectiveFactoryId);
+      }
 
-      if (factoryResponse.data) {
+      const [cycleResponse, countsResponse, allocationsResponse, factoryResponse] =
+        await Promise.all([
+          supabase
+            .from("order_cycles")
+            .select("id,name,status")
+            .order("started_at", { ascending: false })
+            .limit(5),
+          countsQuery,
+          allocationsQuery,
+          isMasterView
+            ? Promise.resolve({ data: null })
+            : supabase
+                .from("factories")
+                .select("id,name")
+                .eq("id", effectiveFactoryId)
+                .single(),
+        ]);
+
+      if (isMasterView) {
+        setFactory({ id: MASTER_FACTORY, name: "Master view (all factories)" });
+      } else if (factoryResponse.data) {
         setFactory(factoryResponse.data as Factory);
       }
 
@@ -181,7 +205,7 @@ export default function FactoryStock() {
     };
 
     loadFactoryData();
-  }, [canManage, effectiveFactoryId]);
+  }, [canManage, effectiveFactoryId, isMasterView]);
 
   useEffect(() => {
     if (cycles.length > 0 && !selectedCycleId) {
@@ -199,7 +223,7 @@ export default function FactoryStock() {
     const loadManufacturedItems = async () => {
       const { data: itemsData, error } = await supabase
         .from("items")
-        .select("id,name,sku,type,unit,meta_category,sub_category,packaging_type")
+        .select("id,name,type,sub_category,packaging_type")
         .eq("type", "manufactured");
 
       if (error || !itemsData) {
@@ -207,10 +231,13 @@ export default function FactoryStock() {
         return;
       }
 
-      // Prepare grid data by combining items with existing counts and allocations
+      // Prepare grid data by combining items with existing counts and allocations.
+      // In master view we sum across every factory's count and allocation for
+      // the cycle; in single-factory view there's only one row per item, so
+      // these reductions still produce the right number.
       let gridRows: FactoryCountRow[] = itemsData.map(item => {
-        const existingCount = counts.find(
-          count => count.cycle_id === selectedCycleId && count.item_id === item.id
+        const matchingCounts = counts.filter(
+          count => count.cycle_id === selectedCycleId && count.item_id === item.id,
         );
 
         const itemAllocations = allocations.filter(
@@ -218,33 +245,31 @@ export default function FactoryStock() {
         );
 
         const totalAllocated = itemAllocations.reduce((sum, alloc) => sum + alloc.qty, 0);
-        const availableQty = existingCount?.available_qty || 0;
-        const reserveQty = 1; // Always reserve 1 unit per item
-        const allocatableQty = Math.max(0, availableQty - reserveQty);
+        const availableQty = matchingCounts.reduce((sum, c) => sum + c.available_qty, 0);
+        const reserveQty = matchingCounts.length; // 1 reserved per factory holding this item
+        const allocatableQty = matchingCounts.reduce(
+          (sum, c) => sum + Math.max(0, c.available_qty - 1),
+          0,
+        );
 
         return {
           item_id: item.id,
           item_name: item.name,
-          item_sku: item.sku,
           item_type: item.type,
-          unit: item.unit,
           available_qty: availableQty,
-          has_existing_count: !!existingCount,
+          allocatable_qty: allocatableQty,
+          has_existing_count: matchingCounts.length > 0,
           total_allocated: totalAllocated,
           remaining_after_reserve: allocatableQty - totalAllocated,
           reserve_qty: reserveQty,
-          meta_category: item.meta_category || null,
           sub_category: item.sub_category || null,
           packaging_type: item.packaging_type || null,
         };
       });
 
-      // Sort by meta_category then sub_category for grouping
-      gridRows.sort((a, b) => {
-        const metaSort = (a.meta_category || "").localeCompare(b.meta_category || "");
-        if (metaSort !== 0) return metaSort;
-        return (a.sub_category || "").localeCompare(b.sub_category || "");
-      });
+      gridRows.sort((a, b) =>
+        (a.sub_category || "").localeCompare(b.sub_category || ""),
+      );
 
       setGridData(gridRows);
     };
@@ -253,8 +278,12 @@ export default function FactoryStock() {
   }, [selectedCycleId, counts, allocations, effectiveFactoryId]);
 
   const handleCellValueChanged = async (params: any) => {
-    if (!canManage || !selectedCycleId || !effectiveFactoryId) {
-      setMessage("You do not have permission to update stock counts.");
+    if (!canEdit || !selectedCycleId || !effectiveFactoryId) {
+      setMessage(
+        isMasterView
+          ? "Switch to a specific factory to edit counts."
+          : "You do not have permission to update stock counts.",
+      );
       return;
     }
 
@@ -296,7 +325,7 @@ export default function FactoryStock() {
     // Update the local counts state
     const { data: countsData } = await supabase
       .from("factory_counts")
-      .select("cycle_id,factory_id,item_id,available_qty,counted_at,items(name,sku,type,unit)")
+      .select("cycle_id,factory_id,item_id,available_qty,counted_at,items(name,type)")
       .eq("factory_id", effectiveFactoryId)
       .order("counted_at", { ascending: false });
 
@@ -306,12 +335,8 @@ export default function FactoryStock() {
   };
 
   const columnDefs: ColDef<FactoryCountRow>[] = [
-    { headerName: "Meta Category", field: "meta_category", sortable: true, filter: true, width: 140 },
     { headerName: "Category", field: "sub_category", sortable: true, filter: true, width: 140 },
-    { headerName: "SKU", field: "item_sku", sortable: true, filter: true, width: 120 },
     { headerName: "Item Name", field: "item_name", sortable: true, filter: true, width: 200 },
-    { headerName: "Type", field: "item_type", sortable: true, filter: true, width: 100 },
-    { headerName: "Unit", field: "unit", sortable: true, filter: true, width: 80 },
     { headerName: "Packaging", field: "packaging_type", sortable: true, filter: true, width: 120 },
     {
       headerName: "Available Qty",
@@ -319,27 +344,14 @@ export default function FactoryStock() {
       sortable: true,
       filter: true,
       width: 130,
-      editable: true,
+      editable: !isMasterView,
       cellEditor: "agNumberCellEditor",
       cellEditorParams: { min: 0 },
       cellStyle: (params) => ({
         backgroundColor: params.data?.has_existing_count ? '#1f2937' : '#374151',
       }),
     },
-    {
-      headerName: "Reserve (1 unit)",
-      field: "reserve_qty",
-      sortable: true,
-      filter: true,
-      width: 130,
-      cellStyle: () => ({
-        backgroundColor: '#1f2937',
-        color: '#fbbf24',
-        fontWeight: 'bold',
-      }),
-    },
-    { headerName: "Allocatable", field: "available_qty", sortable: true, filter: true, width: 120,
-      valueGetter: (params) => Math.max(0, (params.data?.available_qty || 0) - 1),
+    { headerName: "Allocatable", field: "allocatable_qty", sortable: true, filter: true, width: 120,
       cellStyle: () => ({
         backgroundColor: '#1e3a2f',
         color: '#10b981',
@@ -387,6 +399,7 @@ export default function FactoryStock() {
             className="px-3 py-2 bg-slate-800 border border-slate-600 rounded text-white text-sm"
           >
             <option value="">(Select a factory)</option>
+            <option value={MASTER_FACTORY}>Master factory (all factories)</option>
             {allFactories.map((f) => (
               <option key={f.id} value={f.id}>
                 {f.name}
@@ -399,7 +412,11 @@ export default function FactoryStock() {
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-xl font-semibold text-white">{factory?.name || "Loading..."}</h2>
-              <p className="text-sm text-slate-400">Factory Manager Dashboard</p>
+              <p className="text-sm text-slate-400">
+                {isMasterView
+                  ? "Aggregated stock across every factory — read-only"
+                  : "Factory Manager Dashboard"}
+              </p>
             </div>
             <div className="flex items-center gap-4">
               {isHQAdmin && (
@@ -413,6 +430,7 @@ export default function FactoryStock() {
                     onChange={(event) => setSelectedFactoryId(event.target.value)}
                     className="px-3 py-2 bg-slate-800 border border-slate-600 rounded text-white text-sm"
                   >
+                    <option value={MASTER_FACTORY}>Master factory (all factories)</option>
                     {allFactories.map((f) => (
                       <option key={f.id} value={f.id}>
                         {f.name}
@@ -459,14 +477,12 @@ export default function FactoryStock() {
             <p><strong>Instructions:</strong></p>
             <ul className="list-disc list-inside mt-2 space-y-1">
               <li>Select an order cycle from the dropdown above</li>
-              <li>Click on "Available Qty" cells to edit stock quantities</li>
+              <li>Click on &quot;Available Qty&quot; cells to edit stock quantities (1 unit per factory is reserved automatically and excluded from Allocatable)</li>
               <li>Changes are saved automatically when you finish editing a cell</li>
               <li>Cells with darker backgrounds already have saved counts</li>
-              <li><strong className="text-yellow-400">Reserve:</strong> 1 unit is always reserved for emergencies and cannot be allocated</li>
-              <li><strong className="text-green-400">Allocatable:</strong> Available quantity minus the 1-unit reserve</li>
-              <li>"Allocated" shows total quantities allocated to stores</li>
-              <li>"Remaining" shows available stock after allocations (red if negative)</li>
-              <li>Only manufactured items are shown</li>
+              <li><strong className="text-green-400">Allocatable:</strong> Available stock minus the per-factory reserve</li>
+              <li>&quot;Allocated&quot; shows total quantities allocated to stores; &quot;Remaining&quot; turns red if it goes negative</li>
+              <li>Switch the Factory dropdown to <strong>Master factory</strong> for a read-only view aggregated across every factory</li>
             </ul>
           </div>
         </div>

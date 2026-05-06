@@ -20,19 +20,15 @@ type Supplier = {
 
 type Item = {
   id: string;
-  sku: string;
   name: string;
   type: "manufactured" | "purchased";
   supplier_id: string | null;
-  unit: string | null;
-  meta_category: string | null;
   sub_category: string | null;
   packaging_type: string | null;
   created_at: string;
   suppliers?: { name: string };
 };
 
-const META_CATEGORIES = ["Manufactured", "Purchased"];
 const SUB_CATEGORIES = ["Empanada", "Dessert", "Drink", "Cleaning Supplies", "General Supplies", "Sauce"];
 const PACKAGING_TYPES = ["Single", "Stack", "Box", "Case", "Dozen", "Crate", "Bundle", "Bulk"];
 
@@ -43,12 +39,9 @@ export default function AdminItems() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
-  const [sku, setSku] = useState("");
   const [name, setName] = useState("");
   const [type, setType] = useState<"manufactured" | "purchased">("manufactured");
   const [supplierId, setSupplierId] = useState("");
-  const [unit, setUnit] = useState("");
-  const [metaCategory, setMetaCategory] = useState("");
   const [subCategory, setSubCategory] = useState("");
   const [packagingType, setPackagingType] = useState("");
   const [message, setMessage] = useState<string | null>(null);
@@ -111,12 +104,9 @@ export default function AdminItems() {
 
   const resetForm = () => {
     setEditingItem(null);
-    setSku("");
     setName("");
     setType("manufactured");
     setSupplierId("");
-    setUnit("");
-    setMetaCategory("");
     setSubCategory("");
     setPackagingType("");
   };
@@ -128,12 +118,9 @@ export default function AdminItems() {
     setMessage(null);
 
     const payload = {
-      sku: sku.trim(),
       name: name.trim(),
       type,
       supplier_id: supplierId || null,
-      unit: unit.trim() || null,
-      meta_category: metaCategory || null,
       sub_category: subCategory || null,
       packaging_type: packagingType || null,
     };
@@ -157,12 +144,9 @@ export default function AdminItems() {
 
   const handleEdit = (item: Item) => {
     setEditingItem(item);
-    setSku(item.sku);
     setName(item.name);
     setType(item.type);
     setSupplierId(item.supplier_id || "");
-    setUnit(item.unit || "");
-    setMetaCategory(item.meta_category || "");
     setSubCategory(item.sub_category || "");
     setPackagingType(item.packaging_type || "");
     setShowForm(true);
@@ -232,7 +216,7 @@ export default function AdminItems() {
   }) => {
     if (params.newValue === params.oldValue) return;
     const field = params.colDef.field;
-    if (!field || !["meta_category", "sub_category", "packaging_type"].includes(field)) return;
+    if (!field || !["sub_category", "packaging_type"].includes(field)) return;
 
     const { error } = await supabase
       .from("items")
@@ -251,7 +235,6 @@ export default function AdminItems() {
   };
 
   const columnDefs: ColDef<Item>[] = [
-    { headerName: "SKU", field: "sku", sortable: true, filter: true, width: 120 },
     { headerName: "Name", field: "name", sortable: true, filter: true, width: 200 },
     { headerName: "Type", field: "type", sortable: true, filter: true, width: 120 },
     {
@@ -260,17 +243,6 @@ export default function AdminItems() {
       sortable: true,
       filter: true,
       width: 150,
-    },
-    { headerName: "Unit", field: "unit", sortable: true, filter: true, width: 100 },
-    {
-      headerName: "Meta Category",
-      field: "meta_category",
-      sortable: true,
-      filter: true,
-      width: 150,
-      editable: true,
-      cellEditor: "agSelectCellEditor",
-      cellEditorParams: { values: ["", ...META_CATEGORIES] },
     },
     {
       headerName: "Sub Category",
@@ -325,7 +297,7 @@ export default function AdminItems() {
     <section className="rounded-3xl border border-white/10 bg-slate-950/90 p-8 text-slate-100 shadow-lg shadow-slate-950/20">
       <h1 className="text-3xl font-semibold text-white">Admin: Items</h1>
       <p className="mt-3 text-slate-400">
-        Manage items including type, supplier, unit, and category metadata. The
+        Manage items including type, supplier, and category metadata. The
         category and packaging columns are editable inline in the grid.
       </p>
 
@@ -359,17 +331,6 @@ export default function AdminItems() {
               </h3>
 
               <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label htmlFor="sku" className="block text-sm font-medium text-slate-300">SKU</label>
-                  <input
-                    id="sku"
-                    type="text"
-                    value={sku}
-                    onChange={(e) => setSku(e.target.value)}
-                    className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
-                    required
-                  />
-                </div>
                 <div>
                   <label htmlFor="name" className="block text-sm font-medium text-slate-300">Name</label>
                   <input
@@ -405,30 +366,6 @@ export default function AdminItems() {
                     <option value="">None</option>
                     {suppliers.map((s) => (
                       <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label htmlFor="unit" className="block text-sm font-medium text-slate-300">Unit</label>
-                  <input
-                    id="unit"
-                    type="text"
-                    value={unit}
-                    onChange={(e) => setUnit(e.target.value)}
-                    className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="meta" className="block text-sm font-medium text-slate-300">Meta Category</label>
-                  <select
-                    id="meta"
-                    value={metaCategory}
-                    onChange={(e) => setMetaCategory(e.target.value)}
-                    className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
-                  >
-                    <option value="">None</option>
-                    {META_CATEGORIES.map((c) => (
-                      <option key={c} value={c}>{c}</option>
                     ))}
                   </select>
                 </div>

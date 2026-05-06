@@ -28,8 +28,7 @@ type Allocation = {
   };
   items?: {
     name: string;
-    sku: string;
-    meta_category: string | null;
+    type: string;
     sub_category: string | null;
   };
 };
@@ -38,7 +37,7 @@ type StoreSummary = {
   store_id: string;
   store_name: string;
   order_date: string | null;
-  items: { item_id: string; item_name: string; sku: string; qty: number }[];
+  items: { item_id: string; item_name: string; qty: number }[];
 };
 
 export default function DeliveryOrders() {
@@ -119,7 +118,7 @@ export default function DeliveryOrders() {
         supabase.from("order_cycles").select("id,name,status,order_date").order("started_at", { ascending: false }).limit(5),
         supabase
           .from("allocations")
-          .select("cycle_id,store_id,item_id,qty,factory_id,stores(name),items(name,sku,meta_category,sub_category)")
+          .select("cycle_id,store_id,item_id,qty,factory_id,stores(name),items(name,type,sub_category)")
           .order("cycle_id,store_id,item_id"),
       ]);
 
@@ -146,7 +145,6 @@ export default function DeliveryOrders() {
   type TotalOrderItem = {
     item_id: string;
     item_name: string;
-    sku: string;
     qty: number;
   };
 
@@ -157,27 +155,26 @@ export default function DeliveryOrders() {
     cycleAllocations.forEach((allocation) => {
       if (allocation.qty === 0) return;
 
-      const metaCategory = allocation.items?.meta_category ?? "Uncategorized";
+      const rawType = allocation.items?.type ?? "uncategorized";
+      const typeLabel = rawType.charAt(0).toUpperCase() + rawType.slice(1);
       const subCategory = allocation.items?.sub_category ?? "Uncategorized";
       const itemId = allocation.item_id;
       const itemName = allocation.items?.name ?? itemId;
-      const itemSku = allocation.items?.sku ?? "";
 
-      metaGroups[metaCategory] ??= {};
-      metaGroups[metaCategory][subCategory] ??= { totalQty: 0, items: {} };
+      metaGroups[typeLabel] ??= {};
+      metaGroups[typeLabel][subCategory] ??= { totalQty: 0, items: {} };
 
-      metaGroups[metaCategory][subCategory].totalQty += allocation.qty;
-      metaGroups[metaCategory][subCategory].items[itemId] ??= {
+      metaGroups[typeLabel][subCategory].totalQty += allocation.qty;
+      metaGroups[typeLabel][subCategory].items[itemId] ??= {
         item_id: itemId,
         item_name: itemName,
-        sku: itemSku,
         qty: 0,
       };
-      metaGroups[metaCategory][subCategory].items[itemId].qty += allocation.qty;
+      metaGroups[typeLabel][subCategory].items[itemId].qty += allocation.qty;
     });
 
-    return Object.entries(metaGroups).map(([metaCategory, subCats]) => ({
-      meta_category: metaCategory,
+    return Object.entries(metaGroups).map(([typeLabel, subCats]) => ({
+      meta_category: typeLabel,
       totalQty: Object.values(subCats).reduce((sum, sub) => sum + sub.totalQty, 0),
       sub_categories: Object.entries(subCats)
         .map(([subCategory, data]) => ({
@@ -215,7 +212,6 @@ export default function DeliveryOrders() {
         storeMap[allocation.store_id].items.push({
           item_id: allocation.item_id,
           item_name: allocation.items?.name ?? allocation.item_id,
-          sku: allocation.items?.sku ?? "",
           qty: allocation.qty,
         });
       }
@@ -305,10 +301,7 @@ export default function DeliveryOrders() {
                             <div className="mt-3 space-y-2">
                               {subGroup.items.map((item) => (
                                 <div key={item.item_id} className="flex items-center justify-between gap-4">
-                                  <div>
-                                    <p className="text-sm text-slate-300">{item.item_name}</p>
-                                    <p className="text-xs text-slate-500">{item.sku}</p>
-                                  </div>
+                                  <p className="text-sm text-slate-300">{item.item_name}</p>
                                   <p className="text-sm font-semibold text-white">{item.qty}</p>
                                 </div>
                               ))}
@@ -341,10 +334,7 @@ export default function DeliveryOrders() {
                       <div className="mt-3 space-y-2">
                         {store.items.map((item) => (
                           <div key={item.item_id} className="flex items-center justify-between gap-4">
-                            <div>
-                              <p className="text-sm text-slate-400">{item.item_name}</p>
-                              <p className="text-xs text-slate-500">{item.sku}</p>
-                            </div>
+                            <p className="text-sm text-slate-400">{item.item_name}</p>
                             <p className="text-sm font-semibold text-white">{item.qty}</p>
                           </div>
                         ))}
