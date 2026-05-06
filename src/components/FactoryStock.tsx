@@ -69,6 +69,8 @@ export default function FactoryStock() {
   const [session, setSession] = useState<Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"] | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [factory, setFactory] = useState<Factory | null>(null);
+  const [allFactories, setAllFactories] = useState<Factory[]>([]);
+  const [selectedFactoryId, setSelectedFactoryId] = useState("");
   const [cycles, setCycles] = useState<OrderCycle[]>([]);
   const [counts, setCounts] = useState<FactoryCount[]>([]);
   const [allocations, setAllocations] = useState<AllocationFactory[]>([]);
@@ -78,9 +80,14 @@ export default function FactoryStock() {
   const [loading, setLoading] = useState(false);
 
   const isSignedIn = useMemo(() => !!session?.user, [session]);
+  const isHQAdmin = useMemo(() => profile?.role === "hq_admin", [profile]);
   const isFactoryUser = useMemo(() => profile?.role === "factory_user", [profile]);
   const hasAssignedFactory = useMemo(() => !!profile?.factory_id, [profile]);
-  const canManage = isFactoryUser && hasAssignedFactory;
+  const effectiveFactoryId = useMemo(
+    () => (isHQAdmin ? selectedFactoryId || null : profile?.factory_id ?? null),
+    [isHQAdmin, selectedFactoryId, profile?.factory_id],
+  );
+  const canManage = (isFactoryUser && hasAssignedFactory) || (isHQAdmin && !!effectiveFactoryId);
 
   useEffect(() => {
     const loadSession = async () => {
@@ -124,7 +131,16 @@ export default function FactoryStock() {
   }, [session]);
 
   useEffect(() => {
-    if (!canManage || !profile?.factory_id) {
+    if (!isHQAdmin) return;
+    const loadFactories = async () => {
+      const { data } = await supabase.from("factories").select("id,name").order("name");
+      if (data) setAllFactories(data as Factory[]);
+    };
+    loadFactories();
+  }, [isHQAdmin]);
+
+  useEffect(() => {
+    if (!canManage || !effectiveFactoryId) {
       setFactory(null);
       setCycles([]);
       setCounts([]);
@@ -135,17 +151,17 @@ export default function FactoryStock() {
 
     const loadFactoryData = async () => {
       const [factoryResponse, cycleResponse, countsResponse, allocationsResponse] = await Promise.all([
-        supabase.from("factories").select("id,name").eq("id", profile.factory_id).single(),
+        supabase.from("factories").select("id,name").eq("id", effectiveFactoryId).single(),
         supabase.from("order_cycles").select("id,name,status").order("started_at", { ascending: false }).limit(5),
         supabase
           .from("factory_counts")
           .select("cycle_id,factory_id,item_id,available_qty,counted_at,items(name,sku,type,unit,meta_category,sub_category)")
-          .eq("factory_id", profile.factory_id)
+          .eq("factory_id", effectiveFactoryId)
           .order("counted_at", { ascending: false }),
         supabase
           .from("allocation_factories")
           .select("cycle_id,store_id,item_id,qty,factory_id")
-          .eq("factory_id", profile.factory_id)
+          .eq("factory_id", effectiveFactoryId)
           .order("cycle_id"),
       ]);
 
@@ -167,7 +183,7 @@ export default function FactoryStock() {
     };
 
     loadFactoryData();
-  }, [canManage, profile?.factory_id]);
+  }, [canManage, effectiveFactoryId]);
 
   useEffect(() => {
     if (cycles.length > 0 && !selectedCycleId) {
@@ -176,7 +192,7 @@ export default function FactoryStock() {
   }, [cycles, selectedCycleId]);
 
   useEffect(() => {
-    if (!selectedCycleId || !profile?.factory_id) {
+    if (!selectedCycleId || !effectiveFactoryId) {
       setGridData([]);
       return;
     }
@@ -236,10 +252,10 @@ export default function FactoryStock() {
     };
 
     loadManufacturedItems();
-  }, [selectedCycleId, counts, allocations, profile?.factory_id]);
+  }, [selectedCycleId, counts, allocations, effectiveFactoryId]);
 
   const handleCellValueChanged = async (params: any) => {
-    if (!canManage || !selectedCycleId || !profile?.factory_id) {
+    if (!canManage || !selectedCycleId || !effectiveFactoryId) {
       setMessage("You do not have permission to update stock counts.");
       return;
     }
@@ -258,7 +274,7 @@ export default function FactoryStock() {
 
     const payload = {
       cycle_id: selectedCycleId,
-      factory_id: profile.factory_id,
+      factory_id: effectiveFactoryId,
       item_id: data.item_id,
       available_qty: qtyValue,
       counted_by: session?.user?.email ?? session?.user?.id,
@@ -283,7 +299,7 @@ export default function FactoryStock() {
     const { data: countsData } = await supabase
       .from("factory_counts")
       .select("cycle_id,factory_id,item_id,available_qty,counted_at,items(name,sku,type,unit)")
-      .eq("factory_id", profile.factory_id)
+      .eq("factory_id", effectiveFactoryId)
       .order("counted_at", { ascending: false });
 
     if (countsData) {
@@ -292,8 +308,8 @@ export default function FactoryStock() {
   };
 
   const columnDefs: ColDef<FactoryCountRow>[] = [
-    { headerName: "Meta Category", field: "meta_category", sortable: true, filter: true, width: 140, rowGroup: true, hide: true },
-    { headerName: "Category", field: "sub_category", sortable: true, filter: true, width: 140, rowGroup: true, hide: true },
+    { headerName: "Meta Category", field: "meta_category", sortable: true, filter: true, width: 140 },
+    { headerName: "Category", field: "sub_category", sortable: true, filter: true, width: 140 },
     { headerName: "SKU", field: "item_sku", sortable: true, filter: true, width: 120 },
     { headerName: "Item Name", field: "item_name", sortable: true, filter: true, width: 200 },
     { headerName: "Type", field: "item_type", sortable: true, filter: true, width: 100 },
@@ -356,13 +372,29 @@ export default function FactoryStock() {
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
           <p>Please sign in with Supabase Auth first to access this page.</p>
         </div>
-      ) : !isFactoryUser ? (
+      ) : !isFactoryUser && !isHQAdmin ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
-          <p>This page is only available to factory users.</p>
+          <p>This page is only available to factory users and management.</p>
         </div>
-      ) : !hasAssignedFactory ? (
+      ) : isFactoryUser && !hasAssignedFactory ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
           <p>You are not assigned to a factory. Please contact an administrator.</p>
+        </div>
+      ) : isHQAdmin && !selectedFactoryId ? (
+        <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300 space-y-3">
+          <p>Pick a factory to manage:</p>
+          <select
+            value={selectedFactoryId}
+            onChange={(event) => setSelectedFactoryId(event.target.value)}
+            className="px-3 py-2 bg-slate-800 border border-slate-600 rounded text-white text-sm"
+          >
+            <option value="">(Select a factory)</option>
+            {allFactories.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
+            ))}
+          </select>
         </div>
       ) : (
         <div className="mt-8 space-y-6">
@@ -372,6 +404,25 @@ export default function FactoryStock() {
               <p className="text-sm text-slate-400">Factory Manager Dashboard</p>
             </div>
             <div className="flex items-center gap-4">
+              {isHQAdmin && (
+                <>
+                  <label htmlFor="factory" className="text-sm font-medium text-slate-300">
+                    Factory:
+                  </label>
+                  <select
+                    id="factory"
+                    value={selectedFactoryId}
+                    onChange={(event) => setSelectedFactoryId(event.target.value)}
+                    className="px-3 py-2 bg-slate-800 border border-slate-600 rounded text-white text-sm"
+                  >
+                    {allFactories.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.name}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
               <label htmlFor="cycle" className="text-sm font-medium text-slate-300">
                 Order Cycle:
               </label>

@@ -23,6 +23,7 @@ type OrderCycle = {
   id: string;
   name: string;
   status: string;
+  order_date: string | null;
 };
 
 type StoreItem = {
@@ -45,7 +46,6 @@ type StockEntry = {
   store_id: string;
   item_id: string;
   current_count: number;
-  order_date: string | null;
   entered_at: string;
   items?: {
     name: string;
@@ -61,7 +61,6 @@ type StockEntryRow = {
   unit: string | null;
   capacity: number;
   current_count: number;
-  order_date: string | null;
   is_active: boolean;
   has_existing_entry: boolean;
   sub_category: string | null;
@@ -72,6 +71,8 @@ export default function StoreStockEntry() {
   const [session, setSession] = useState<Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"] | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [store, setStore] = useState<Store | null>(null);
+  const [allStores, setAllStores] = useState<Store[]>([]);
+  const [selectedStoreId, setSelectedStoreId] = useState("");
   const [cycles, setCycles] = useState<OrderCycle[]>([]);
   const [storeItems, setStoreItems] = useState<StoreItem[]>([]);
   const [entries, setEntries] = useState<StockEntry[]>([]);
@@ -81,9 +82,18 @@ export default function StoreStockEntry() {
   const [loading, setLoading] = useState(false);
 
   const isSignedIn = useMemo(() => !!session?.user, [session]);
+  const isHQAdmin = useMemo(() => profile?.role === "hq_admin", [profile]);
   const isStoreManager = useMemo(() => profile?.role === "store_manager", [profile]);
   const hasAssignedStore = useMemo(() => !!profile?.store_id, [profile]);
-  const canManage = isStoreManager && hasAssignedStore;
+  const effectiveStoreId = useMemo(
+    () => (isHQAdmin ? selectedStoreId || null : profile?.store_id ?? null),
+    [isHQAdmin, selectedStoreId, profile?.store_id],
+  );
+  const canManage = (isStoreManager && hasAssignedStore) || (isHQAdmin && !!effectiveStoreId);
+  const selectedCycle = useMemo(
+    () => cycles.find((c) => c.id === selectedCycleId) ?? null,
+    [cycles, selectedCycleId],
+  );
 
   useEffect(() => {
     const loadSession = async () => {
@@ -127,7 +137,16 @@ export default function StoreStockEntry() {
   }, [session]);
 
   useEffect(() => {
-    if (!canManage || !profile?.store_id) {
+    if (!isHQAdmin) return;
+    const loadStores = async () => {
+      const { data } = await supabase.from("stores").select("id,name").order("name");
+      if (data) setAllStores(data as Store[]);
+    };
+    loadStores();
+  }, [isHQAdmin]);
+
+  useEffect(() => {
+    if (!canManage || !effectiveStoreId) {
       setStore(null);
       setCycles([]);
       setStoreItems([]);
@@ -138,17 +157,17 @@ export default function StoreStockEntry() {
 
     const loadStoreData = async () => {
       const [storeResponse, cycleResponse, itemsResponse, entriesResponse] = await Promise.all([
-        supabase.from("stores").select("id,name").eq("id", profile.store_id).single(),
-        supabase.from("order_cycles").select("id,name,status").order("started_at", { ascending: false }).limit(5),
+        supabase.from("stores").select("id,name").eq("id", effectiveStoreId).single(),
+        supabase.from("order_cycles").select("id,name,status,order_date").order("started_at", { ascending: false }).limit(5),
         supabase
           .from("store_items")
           .select("item_id,is_active,capacity,items(name,sku,type,unit,meta_category,sub_category,packaging_type)")
-          .eq("store_id", profile.store_id)
+          .eq("store_id", effectiveStoreId)
           .order("item_id"),
         supabase
           .from("stock_entries")
-          .select("cycle_id,store_id,item_id,current_count,order_date,entered_at,items(name,sku)")
-          .eq("store_id", profile.store_id)
+          .select("cycle_id,store_id,item_id,current_count,entered_at,items(name,sku)")
+          .eq("store_id", effectiveStoreId)
           .order("entered_at", { ascending: false }),
       ]);
 
@@ -170,7 +189,7 @@ export default function StoreStockEntry() {
     };
 
     loadStoreData();
-  }, [canManage, profile?.store_id]);
+  }, [canManage, effectiveStoreId]);
 
   useEffect(() => {
     if (cycles.length > 0 && !selectedCycleId) {
@@ -179,7 +198,7 @@ export default function StoreStockEntry() {
   }, [cycles, selectedCycleId]);
 
   useEffect(() => {
-    if (!selectedCycleId || !profile?.store_id) {
+    if (!selectedCycleId || !effectiveStoreId) {
       setGridData([]);
       return;
     }
@@ -200,7 +219,6 @@ export default function StoreStockEntry() {
           unit: storeItem.items?.unit || null,
           capacity: storeItem.capacity,
           current_count: existingEntry?.current_count || 0,
-          order_date: existingEntry?.order_date || null,
           is_active: storeItem.is_active,
           has_existing_entry: !!existingEntry,
           sub_category: storeItem.items?.sub_category || null,
@@ -212,10 +230,10 @@ export default function StoreStockEntry() {
     gridRows.sort((a, b) => (a.sub_category || "").localeCompare(b.sub_category || ""));
 
     setGridData(gridRows);
-  }, [selectedCycleId, storeItems, entries, profile?.store_id]);
+  }, [selectedCycleId, storeItems, entries, effectiveStoreId]);
 
   const handleCellValueChanged = async (params: any) => {
-    if (!selectedCycleId || !profile?.store_id) return;
+    if (!selectedCycleId || !effectiveStoreId) return;
 
     const { data, colDef, newValue, oldValue } = params;
 
@@ -237,10 +255,9 @@ export default function StoreStockEntry() {
 
         const payload = {
           cycle_id: selectedCycleId,
-          store_id: profile.store_id,
+          store_id: effectiveStoreId,
           item_id: data.item_id,
           current_count: countValue,
-          order_date: data.order_date || null,
           entered_by: session?.user?.email ?? session?.user?.id,
         };
 
@@ -251,36 +268,6 @@ export default function StoreStockEntry() {
         if (error) throw error;
 
         setMessage("Stock count updated successfully.");
-
-        // Update local entries state
-        const newEntry: StockEntry = {
-          ...payload,
-          entered_at: new Date().toISOString(),
-          items: { name: data.item_name, sku: data.item_sku },
-        };
-
-        setEntries(prev => {
-          const filtered = prev.filter(e => !(e.cycle_id === selectedCycleId && e.item_id === data.item_id));
-          return [newEntry, ...filtered];
-        });
-
-      } else if (colDef.field === "order_date") {
-        const payload = {
-          cycle_id: selectedCycleId,
-          store_id: profile.store_id,
-          item_id: data.item_id,
-          current_count: data.current_count,
-          order_date: newValue || null,
-          entered_by: session?.user?.email ?? session?.user?.id,
-        };
-
-        const { error } = await supabase
-          .from("stock_entries")
-          .upsert([payload], { onConflict: "cycle_id,store_id,item_id" });
-
-        if (error) throw error;
-
-        setMessage("Order date updated successfully.");
 
         // Update local entries state
         const newEntry: StockEntry = {
@@ -304,7 +291,7 @@ export default function StoreStockEntry() {
   };
 
   const columnDefs: ColDef<StockEntryRow>[] = [
-    { headerName: "Category", field: "sub_category", sortable: true, filter: true, width: 140, rowGroup: true, hide: true },
+    { headerName: "Category", field: "sub_category", sortable: true, filter: true, width: 140 },
     { headerName: "SKU", field: "item_sku", sortable: true, filter: true, width: 120 },
     { headerName: "Item Name", field: "item_name", sortable: true, filter: true, width: 200 },
     { headerName: "Type", field: "item_type", sortable: true, filter: true, width: 100 },
@@ -324,19 +311,6 @@ export default function StoreStockEntry() {
         backgroundColor: params.data?.has_existing_entry ? '#1f2937' : '#374151',
       }),
     },
-    {
-      headerName: "Order Date",
-      field: "order_date",
-      sortable: true,
-      filter: true,
-      width: 120,
-      editable: true,
-      cellEditor: "agDateCellEditor",
-      valueFormatter: (params) => params.value ? new Date(params.value).toLocaleDateString() : "",
-      cellStyle: (params) => ({
-        backgroundColor: params.data?.has_existing_entry ? '#1f2937' : '#374151',
-      }),
-    },
   ];
 
   return (
@@ -350,13 +324,29 @@ export default function StoreStockEntry() {
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
           <p>Please sign in with Supabase Auth first to access this page.</p>
         </div>
-      ) : !isStoreManager ? (
+      ) : !isStoreManager && !isHQAdmin ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
-          <p>This page is only available to store managers.</p>
+          <p>This page is only available to store managers and management.</p>
         </div>
-      ) : !hasAssignedStore ? (
+      ) : isStoreManager && !hasAssignedStore ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
           <p>You are not assigned to a store. Please contact an administrator.</p>
+        </div>
+      ) : isHQAdmin && !selectedStoreId ? (
+        <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300 space-y-3">
+          <p>Pick a store to manage:</p>
+          <select
+            value={selectedStoreId}
+            onChange={(event) => setSelectedStoreId(event.target.value)}
+            className="px-3 py-2 bg-slate-800 border border-slate-600 rounded text-white text-sm"
+          >
+            <option value="">(Select a store)</option>
+            {allStores.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
         </div>
       ) : (
         <div className="mt-8 space-y-6">
@@ -366,6 +356,25 @@ export default function StoreStockEntry() {
               <p className="text-sm text-slate-400">Store Manager Dashboard</p>
             </div>
             <div className="flex items-center gap-4">
+              {isHQAdmin && (
+                <>
+                  <label htmlFor="store" className="text-sm font-medium text-slate-300">
+                    Store:
+                  </label>
+                  <select
+                    id="store"
+                    value={selectedStoreId}
+                    onChange={(event) => setSelectedStoreId(event.target.value)}
+                    className="px-3 py-2 bg-slate-800 border border-slate-600 rounded text-white text-sm"
+                  >
+                    {allStores.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
               <label htmlFor="cycle" className="text-sm font-medium text-slate-300">
                 Order Cycle:
               </label>
@@ -383,6 +392,15 @@ export default function StoreStockEntry() {
               </select>
             </div>
           </div>
+
+          <p className="text-sm text-slate-400">
+            Order date:{" "}
+            <span className="text-slate-200">
+              {selectedCycle?.order_date
+                ? new Date(selectedCycle.order_date).toLocaleDateString()
+                : "Not set — ask management to set it on the cycle"}
+            </span>
+          </p>
 
           {message && <p className="text-sm text-cyan-300">{message}</p>}
 

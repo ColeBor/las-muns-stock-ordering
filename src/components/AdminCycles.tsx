@@ -20,6 +20,7 @@ type OrderCycle = {
   name: string;
   started_at: string;
   status: string;
+  order_date: string | null;
   created_by: string | null;
   created_at: string;
   cycle_stores?: { stores: { id: string; name: string } }[];
@@ -42,6 +43,7 @@ export default function AdminCycles() {
   const [editingCycle, setEditingCycle] = useState<OrderCycle | null>(null);
   const [name, setName] = useState("");
   const [status, setStatus] = useState<"draft" | "active" | "allocated" | "finalized">("draft");
+  const [orderDate, setOrderDate] = useState<string>("");
   const [selectedStoreIds, setSelectedStoreIds] = useState<string[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -120,6 +122,7 @@ export default function AdminCycles() {
     const cycleData = {
       name: name.trim(),
       status,
+      order_date: orderDate || null,
       created_by: session?.user?.email || null,
     };
 
@@ -171,6 +174,7 @@ export default function AdminCycles() {
     setEditingCycle(null);
     setName("");
     setStatus("draft");
+    setOrderDate("");
     setSelectedStoreIds([]);
     await reloadCycles();
   };
@@ -179,6 +183,7 @@ export default function AdminCycles() {
     setEditingCycle(cycle);
     setName(cycle.name);
     setStatus(cycle.status as "draft" | "active" | "allocated" | "finalized");
+    setOrderDate(cycle.order_date ?? "");
     setSelectedStoreIds(cycle.cycle_stores?.map((cs) => cs.stores.id) || []);
     setShowForm(true);
   };
@@ -228,6 +233,15 @@ export default function AdminCycles() {
       filter: true,
       width: 120,
       valueFormatter: (params) => new Date(params.value).toLocaleDateString(),
+    },
+    {
+      headerName: "Order date",
+      field: "order_date",
+      sortable: true,
+      filter: true,
+      width: 130,
+      valueFormatter: (params) =>
+        params.value ? new Date(params.value).toLocaleDateString() : "",
     },
     {
       headerName: "Stores",
@@ -308,6 +322,7 @@ export default function AdminCycles() {
                 setEditingCycle(null);
                 setName("");
                 setStatus("draft");
+                setOrderDate("");
                 setSelectedStoreIds([]);
                 setShowForm(true);
                 setSelectedCycleId(null);
@@ -333,11 +348,13 @@ export default function AdminCycles() {
               editing={editingCycle}
               name={name}
               status={status}
+              orderDate={orderDate}
               selectedStoreIds={selectedStoreIds}
               stores={stores}
               loading={loading}
               setName={setName}
               setStatus={setStatus}
+              setOrderDate={setOrderDate}
               setSelectedStoreIds={setSelectedStoreIds}
               onSubmit={handleSubmit}
               onCancel={() => setShowForm(false)}
@@ -393,11 +410,13 @@ export default function AdminCycles() {
                   editing={editingCycle}
                   name={name}
                   status={status}
+                  orderDate={orderDate}
                   selectedStoreIds={selectedStoreIds}
                   stores={stores}
                   loading={loading}
                   setName={setName}
                   setStatus={setStatus}
+                  setOrderDate={setOrderDate}
                   setSelectedStoreIds={setSelectedStoreIds}
                   onSubmit={handleSubmit}
                   onCancel={() => setSelectedCycleId(null)}
@@ -419,11 +438,13 @@ function CycleEditForm(props: {
   editing: OrderCycle | null;
   name: string;
   status: "draft" | "active" | "allocated" | "finalized";
+  orderDate: string;
   selectedStoreIds: string[];
   stores: Store[];
   loading: boolean;
   setName: (v: string) => void;
   setStatus: (v: "draft" | "active" | "allocated" | "finalized") => void;
+  setOrderDate: (v: string) => void;
   setSelectedStoreIds: (v: string[]) => void;
   onSubmit: (e: FormEvent<HTMLFormElement>) => void;
   onCancel: () => void;
@@ -457,6 +478,16 @@ function CycleEditForm(props: {
           <option value="allocated">Allocated</option>
           <option value="finalized">Finalized</option>
         </select>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-slate-300">Order date</label>
+        <input
+          type="date"
+          value={props.orderDate}
+          onChange={(e) => props.setOrderDate(e.target.value)}
+          className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
+        />
       </div>
 
       <div>
@@ -509,7 +540,6 @@ type StockEntryRow = {
   item_sku: string;
   item_name: string;
   current_count: number;
-  order_date: string | null;
   entered_at: string;
   entered_by: string | null;
 };
@@ -521,7 +551,7 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
       const { data } = await supabase
         .from("stock_entries")
         .select(
-          "current_count,order_date,entered_at,entered_by,stores(name),items(sku,name)",
+          "current_count,entered_at,entered_by,stores(name),items(sku,name)",
         )
         .eq("cycle_id", cycleId)
         .order("entered_at", { ascending: false });
@@ -529,7 +559,6 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
         setRows(
           (data as unknown as Array<{
             current_count: number;
-            order_date: string | null;
             entered_at: string;
             entered_by: string | null;
             stores: { name: string } | null;
@@ -539,7 +568,6 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
             item_sku: e.items?.sku ?? "",
             item_name: e.items?.name ?? "",
             current_count: e.current_count,
-            order_date: e.order_date,
             entered_at: e.entered_at,
             entered_by: e.entered_by,
           })),
@@ -554,14 +582,6 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
     { headerName: "SKU", field: "item_sku", sortable: true, filter: true, width: 120 },
     { headerName: "Item", field: "item_name", sortable: true, filter: true, width: 220 },
     { headerName: "Count", field: "current_count", sortable: true, filter: true, width: 110 },
-    {
-      headerName: "Order date",
-      field: "order_date",
-      sortable: true,
-      filter: true,
-      width: 130,
-      valueFormatter: (p) => (p.value ? new Date(p.value).toLocaleDateString() : ""),
-    },
     {
       headerName: "Entered",
       field: "entered_at",

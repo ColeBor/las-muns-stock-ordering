@@ -14,6 +14,7 @@ type OrderCycle = {
   id: string;
   name: string;
   status: string;
+  order_date: string | null;
 };
 
 type Allocation = {
@@ -33,12 +34,6 @@ type Allocation = {
   };
 };
 
-type StockEntryDate = {
-  cycle_id: string;
-  store_id: string;
-  order_date: string | null;
-};
-
 type StoreSummary = {
   store_id: string;
   store_name: string;
@@ -51,7 +46,6 @@ export default function DeliveryOrders() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [cycles, setCycles] = useState<OrderCycle[]>([]);
   const [allocations, setAllocations] = useState<Allocation[]>([]);
-  const [stockEntryDates, setStockEntryDates] = useState<StockEntryDate[]>([]);
   const [selectedCycleId, setSelectedCycleId] = useState("");
   const [loading, setLoading] = useState(false);
   const [supabaseReady, setSupabaseReady] = useState(true);
@@ -122,17 +116,12 @@ export default function DeliveryOrders() {
 
     const loadDeliveryData = async () => {
       setLoading(true);
-      const [cycleResponse, allocationsResponse, stockEntriesResponse] = await Promise.all([
-        supabase.from("order_cycles").select("id,name,status").order("started_at", { ascending: false }).limit(5),
+      const [cycleResponse, allocationsResponse] = await Promise.all([
+        supabase.from("order_cycles").select("id,name,status,order_date").order("started_at", { ascending: false }).limit(5),
         supabase
           .from("allocations")
           .select("cycle_id,store_id,item_id,qty,factory_id,stores(name),items(name,sku,meta_category,sub_category)")
           .order("cycle_id,store_id,item_id"),
-        // Fetch order_date from stock_entries separately. There's no FK between
-        // allocations and stock_entries, so an embedded select fails on PostgREST.
-        supabase
-          .from("stock_entries")
-          .select("cycle_id,store_id,order_date"),
       ]);
 
       if (cycleResponse.data) {
@@ -141,10 +130,6 @@ export default function DeliveryOrders() {
 
       if (allocationsResponse.data) {
         setAllocations(allocationsResponse.data as unknown as Allocation[]);
-      }
-
-      if (stockEntriesResponse.data) {
-        setStockEntryDates(stockEntriesResponse.data as StockEntryDate[]);
       }
 
       setLoading(false);
@@ -267,24 +252,16 @@ export default function DeliveryOrders() {
     const cycleAllocations = allocations.filter((a) => a.cycle_id === selectedCycleId);
     const storeMap: { [storeId: string]: StoreSummary } = {};
 
-    // Build a (cycle, store) -> earliest order_date lookup so each store row can
-    // show its requested delivery date even though stock_entries isn't joined.
-    const orderDateByStore = new Map<string, string | null>();
-    for (const se of stockEntryDates) {
-      if (se.cycle_id !== selectedCycleId) continue;
-      if (!se.order_date) continue;
-      const existing = orderDateByStore.get(se.store_id);
-      if (!existing || se.order_date < existing) {
-        orderDateByStore.set(se.store_id, se.order_date);
-      }
-    }
+    // One delivery date per cycle, applied to every store in that cycle.
+    const cycleOrderDate =
+      cycles.find((c) => c.id === selectedCycleId)?.order_date ?? null;
 
     cycleAllocations.forEach((allocation) => {
       if (!storeMap[allocation.store_id]) {
         storeMap[allocation.store_id] = {
           store_id: allocation.store_id,
           store_name: allocation.stores?.name ?? allocation.store_id,
-          order_date: orderDateByStore.get(allocation.store_id) ?? null,
+          order_date: cycleOrderDate,
           items: [],
         };
       }
@@ -309,7 +286,7 @@ export default function DeliveryOrders() {
     })).filter(store => store.items.length > 0);
 
     return result;
-  }, [allocations, stockEntryDates, selectedCycleId]);
+  }, [allocations, cycles, selectedCycleId]);
 
   return (
     <section className="rounded-3xl border border-white/10 bg-slate-950/90 p-8 text-slate-100 shadow-lg shadow-slate-950/20">
@@ -410,6 +387,14 @@ export default function DeliveryOrders() {
           <div className="grid gap-8 lg:grid-cols-2">
             <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6">
               <h2 className="text-xl font-semibold text-white">Total orders to load</h2>
+              <p className="mt-1 text-sm text-slate-400">
+                Order date:{" "}
+                <span className="text-slate-200">
+                  {cycles.find((c) => c.id === selectedCycleId)?.order_date
+                    ? new Date(cycles.find((c) => c.id === selectedCycleId)!.order_date!).toLocaleDateString()
+                    : "Not set"}
+                </span>
+              </p>
               <div className="mt-4 space-y-3">
                 {loading ? (
                   <p className="text-slate-400">Loading...</p>
