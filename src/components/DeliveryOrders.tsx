@@ -52,6 +52,8 @@ export default function DeliveryOrders() {
   const [selectedCycleId, setSelectedCycleId] = useState("");
   const [loading, setLoading] = useState(false);
   const [supabaseReady, setSupabaseReady] = useState(true);
+  const [marking, setMarking] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
 
   const isSignedIn = useMemo(() => !!session?.user, [session]);
   const isHQAdmin = useMemo(() => profile?.role === "hq_admin", [profile]);
@@ -242,10 +244,57 @@ export default function DeliveryOrders() {
     ];
   }, [storeNames]);
 
-  const cycleDateLabel = useMemo(() => {
-    const cycle = cycles.find((c) => c.id === selectedCycleId);
-    return cycle?.order_date ? new Date(cycle.order_date).toLocaleDateString() : "Not set";
-  }, [cycles, selectedCycleId]);
+  const selectedCycle = useMemo(
+    () => cycles.find((c) => c.id === selectedCycleId),
+    [cycles, selectedCycleId],
+  );
+  const cycleDateLabel = selectedCycle?.order_date
+    ? new Date(selectedCycle.order_date).toLocaleDateString()
+    : "Not set";
+  const isAllocated = selectedCycle?.status === "allocated";
+  const isDelivered = selectedCycle?.status === "delivered";
+  const hasOrderDate = !!selectedCycle?.order_date;
+  const canMarkDelivered = isAllocated && hasOrderDate && !isDelivered;
+  const markDeliveredTitle = isDelivered
+    ? "Already delivered"
+    : !isAllocated
+      ? "Run allocations first — Mark delivered is only available once the cycle is in 'allocated' status"
+      : !hasOrderDate
+        ? "Set the cycle's order date before marking delivered"
+        : undefined;
+
+  const markDelivered = async () => {
+    if (!selectedCycleId || !canMarkDelivered) return;
+    if (
+      !confirm(
+        `Mark the ${cycleDateLabel} cycle as delivered? This flips the cycle status to 'delivered' and locks it from further changes.`,
+      )
+    ) {
+      return;
+    }
+    setMarking(true);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/allocations/finalize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cycle_id: selectedCycleId }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setMessage(`Error: ${data.error}`);
+      } else {
+        setMessage(`✅ ${data.message}`);
+        setCycles((prev) =>
+          prev.map((c) => (c.id === selectedCycleId ? { ...c, status: "delivered" } : c)),
+        );
+      }
+    } catch (err) {
+      setMessage(`Error: ${err instanceof Error ? err.message : "Unknown"}`);
+    } finally {
+      setMarking(false);
+    }
+  };
 
   return (
     <section className="rounded-3xl border border-white/10 bg-slate-950/90 p-8 text-slate-100 shadow-lg shadow-slate-950/20">
@@ -289,7 +338,7 @@ export default function DeliveryOrders() {
                 ))}
               </select>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-300">
                 Delivery: <span className="text-white">{cycleDateLabel}</span>
               </span>
@@ -299,8 +348,30 @@ export default function DeliveryOrders() {
               <span className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-300">
                 Stores: <span className="text-white">{storeCount}</span>
               </span>
+              <button
+                onClick={markDelivered}
+                disabled={marking || !canMarkDelivered}
+                title={markDeliveredTitle}
+                className="rounded-full bg-amber-500 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
+              >
+                {marking
+                  ? "Marking..."
+                  : isDelivered
+                    ? "Delivered ✓"
+                    : "Mark delivered"}
+              </button>
             </div>
           </div>
+
+          {message && (
+            <div
+              className={`rounded-2xl p-3 text-sm ${
+                message.startsWith("Error") ? "bg-rose-950/80 text-rose-200" : "bg-green-950/80 text-green-200"
+              }`}
+            >
+              {message}
+            </div>
+          )}
 
           <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-5">
             {loading ? (
