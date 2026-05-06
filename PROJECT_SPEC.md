@@ -157,6 +157,26 @@ Enforce with Supabase Row Level Security.
 
 ---
 
+## Deploying to a fresh environment
+
+When the app is deployed to a brand-new Supabase project, the first user account needs to be promoted to HQ admin manually — there's no admin user yet to assign roles via the UI.
+
+1. **Apply migrations.** Run every SQL migration in `supabase/migrations/` in chronological order through the Supabase SQL editor.
+2. **Sign up your account** via the regular auth UI on the homepage (email + password). The `handle_new_user` trigger creates a profile row with the default role of `store_manager`.
+3. **Look up your auth user UUID** in the SQL editor:
+   ```sql
+   select id, email from auth.users where email = 'you@example.com';
+   ```
+4. **Promote the profile to hq_admin:**
+   ```sql
+   update public.profiles set role = 'hq_admin' where id = '<auth-user-uuid>';
+   ```
+5. **Sign out and back in** so the new role takes effect on the client.
+
+From that point on, all subsequent admin promotions / role changes happen through the HQ assignment center on the home page. You only need this manual step on the very first install.
+
+---
+
 ## Deferred / Future
 
 - **Days-of-cover capacity calculation** as alternative to manual capacity (discussed, deferred for V1)

@@ -6,6 +6,8 @@ import { supabase } from "@/lib/supabaseClient";
 
 type Profile = {
   id: string;
+  email: string | null;
+  display_name: string | null;
   role: string | null;
   store_id: string | null;
   factory_id: string | null;
@@ -43,6 +45,8 @@ export default function SupabaseAuth() {
   const [adminMessage, setAdminMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [adminLoading, setAdminLoading] = useState(false);
+  const [selectedProfileId, setSelectedProfileId] = useState<string>("");
+  const [displayNameDraft, setDisplayNameDraft] = useState<string>("");
 
   useEffect(() => {
     const loadSession = async () => {
@@ -102,7 +106,7 @@ export default function SupabaseAuth() {
       const [storesRes, factoriesRes, profilesRes] = await Promise.all([
         supabase.from("stores").select("id,name").order("name"),
         supabase.from("factories").select("id,name").order("name"),
-        supabase.from("profiles").select("id,role,store_id,factory_id"),
+        supabase.from("profiles").select("id,email,display_name,role,store_id,factory_id"),
       ]);
 
       if (!storesRes.error && storesRes.data) {
@@ -166,22 +170,16 @@ export default function SupabaseAuth() {
     }
   };
 
-  const updateProfileAssignment = async (
+  const updateProfile = async (
     profileId: string,
-    newRole: string,
-    newStoreId: string | null,
-    newFactoryId: string | null,
+    patch: Partial<Pick<Profile, "display_name" | "role" | "store_id" | "factory_id">>,
   ) => {
     setAdminLoading(true);
     setAdminMessage(null);
 
     const { error } = await supabase
       .from("profiles")
-      .update({
-        role: newRole,
-        store_id: newRole === "store_manager" ? newStoreId : null,
-        factory_id: newRole === "factory_user" ? newFactoryId : null,
-      })
+      .update(patch)
       .eq("id", profileId);
 
     setAdminLoading(false);
@@ -191,8 +189,10 @@ export default function SupabaseAuth() {
       return;
     }
 
-    setAdminMessage("Profile assignment updated successfully.");
-    const { data: profilesData } = await supabase.from("profiles").select("id,role,store_id,factory_id");
+    setAdminMessage("Profile updated.");
+    const { data: profilesData } = await supabase
+      .from("profiles")
+      .select("id,email,display_name,role,store_id,factory_id");
 
     if (profilesData) {
       setAllProfiles(profilesData as Profile[]);
@@ -241,86 +241,160 @@ export default function SupabaseAuth() {
 
               <div className="mt-4 space-y-4">
                 {adminMessage ? <p className="text-sm text-cyan-300">{adminMessage}</p> : null}
-                <div className="grid gap-4">
-                  {allProfiles.length === 0 ? (
-                    <p className="text-slate-400">No profiles found yet.</p>
-                  ) : (
-                    allProfiles.map((userProfile) => (
-                      <div
-                        key={userProfile.id}
-                        className="rounded-2xl border border-white/10 bg-slate-950/80 p-4"
-                      >
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                {allProfiles.length === 0 ? (
+                  <p className="text-slate-400">No profiles found yet.</p>
+                ) : (
+                  <>
+                    <select
+                      value={selectedProfileId}
+                      onChange={(e) => {
+                        setSelectedProfileId(e.target.value);
+                        const picked = allProfiles.find((p) => p.id === e.target.value);
+                        setDisplayNameDraft(picked?.display_name ?? "");
+                      }}
+                      className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-2 text-sm text-white outline-none focus:border-cyan-400"
+                    >
+                      <option value="">(Pick an account to manage)</option>
+                      {allProfiles.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.display_name?.trim() ||
+                            p.email ||
+                            p.id.slice(0, 8)}
+                          {" — "}
+                          {formatRole(p.role)}
+                        </option>
+                      ))}
+                    </select>
+
+                    {(() => {
+                      const userProfile = allProfiles.find(
+                        (p) => p.id === selectedProfileId,
+                      );
+                      if (!userProfile) return null;
+                      return (
+                        <div className="rounded-2xl border border-white/10 bg-slate-950/80 p-4 space-y-3">
                           <div>
-                            <p className="text-slate-300">Profile ID: {userProfile.id}</p>
-                            <p className="text-slate-400">Current role: {formatRole(userProfile.role)}</p>
+                            <p className="text-xs text-slate-500 break-all">
+                              {userProfile.email ?? userProfile.id}
+                            </p>
+                            <p className="text-slate-400">
+                              Current role: {formatRole(userProfile.role)}
+                            </p>
                           </div>
-                          <div className="flex flex-col gap-2 sm:flex-row">
+
+                          <div>
+                            <label className="block text-xs font-medium text-slate-400 mb-1">
+                              Display name
+                            </label>
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                value={displayNameDraft}
+                                onChange={(e) =>
+                                  setDisplayNameDraft(e.target.value)
+                                }
+                                placeholder="e.g. Store A iPad"
+                                className="flex-1 rounded-full border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400"
+                              />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateProfile(userProfile.id, {
+                                    display_name:
+                                      displayNameDraft.trim() || null,
+                                  })
+                                }
+                                disabled={
+                                  adminLoading ||
+                                  (displayNameDraft.trim() ===
+                                    (userProfile.display_name ?? ""))
+                                }
+                                className="rounded-full bg-cyan-500 px-3 py-2 text-xs font-semibold text-slate-950 disabled:opacity-50"
+                              >
+                                Save
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col gap-2">
+                            <label className="block text-xs font-medium text-slate-400">
+                              Role
+                            </label>
                             <select
                               value={userProfile.role ?? "store_manager"}
-                              onChange={async (event) => {
-                                const newRole = event.target.value;
-                                await updateProfileAssignment(
-                                  userProfile.id,
-                                  newRole,
-                                  userProfile.store_id,
-                                  userProfile.factory_id,
-                                );
-                              }}
+                              onChange={(event) =>
+                                updateProfile(userProfile.id, {
+                                  role: event.target.value,
+                                  store_id:
+                                    event.target.value === "store_manager"
+                                      ? userProfile.store_id
+                                      : null,
+                                  factory_id:
+                                    event.target.value === "factory_user"
+                                      ? userProfile.factory_id
+                                      : null,
+                                })
+                              }
                               className="rounded-full border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none"
                             >
                               <option value="hq_admin">Store Manager</option>
                               <option value="store_manager">Employee</option>
                               <option value="factory_user">Factory Worker</option>
                             </select>
-                            <select
-                              value={userProfile.store_id ?? ""}
-                              onChange={async (event) => {
-                                const newStoreId = event.target.value || null;
-                                await updateProfileAssignment(
-                                  userProfile.id,
-                                  userProfile.role ?? "store_manager",
-                                  newStoreId,
-                                  userProfile.factory_id,
-                                );
-                              }}
-                              disabled={userProfile.role !== "store_manager"}
-                              className="rounded-full border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              <option value="">Unassigned store</option>
-                              {stores.map((store) => (
-                                <option key={store.id} value={store.id}>
-                                  {store.name}
-                                </option>
-                              ))}
-                            </select>
-                            <select
-                              value={userProfile.factory_id ?? ""}
-                              onChange={async (event) => {
-                                const newFactoryId = event.target.value || null;
-                                await updateProfileAssignment(
-                                  userProfile.id,
-                                  userProfile.role ?? "store_manager",
-                                  userProfile.store_id,
-                                  newFactoryId,
-                                );
-                              }}
-                              disabled={userProfile.role !== "factory_user"}
-                              className="rounded-full border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              <option value="">Unassigned factory</option>
-                              {factories.map((factory) => (
-                                <option key={factory.id} value={factory.id}>
-                                  {factory.name}
-                                </option>
-                              ))}
-                            </select>
+
+                            {userProfile.role === "store_manager" && (
+                              <>
+                                <label className="block text-xs font-medium text-slate-400">
+                                  Assigned store
+                                </label>
+                                <select
+                                  value={userProfile.store_id ?? ""}
+                                  onChange={(event) =>
+                                    updateProfile(userProfile.id, {
+                                      store_id: event.target.value || null,
+                                    })
+                                  }
+                                  className="rounded-full border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none"
+                                >
+                                  <option value="">Unassigned store</option>
+                                  {stores.map((store) => (
+                                    <option key={store.id} value={store.id}>
+                                      {store.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </>
+                            )}
+
+                            {userProfile.role === "factory_user" && (
+                              <>
+                                <label className="block text-xs font-medium text-slate-400">
+                                  Assigned factory
+                                </label>
+                                <select
+                                  value={userProfile.factory_id ?? ""}
+                                  onChange={(event) =>
+                                    updateProfile(userProfile.id, {
+                                      factory_id: event.target.value || null,
+                                    })
+                                  }
+                                  className="rounded-full border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none"
+                                >
+                                  <option value="">Unassigned factory</option>
+                                  {factories.map((factory) => (
+                                    <option key={factory.id} value={factory.id}>
+                                      {factory.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </>
+                            )}
                           </div>
                         </div>
-                      </div>
-                    ))
-                  )}
-                </div>
+                      );
+                    })()}
+                  </>
+                )}
               </div>
             </section>
           ) : null}
