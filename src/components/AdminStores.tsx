@@ -5,8 +5,6 @@ import type { FormEvent } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { AgGridReact } from "@/lib/agGrid";
 import type { ColDef, ICellRendererParams } from "ag-grid-community";
-import "ag-grid-community/styles/ag-grid.css";
-import "ag-grid-community/styles/ag-theme-alpine.css";
 
 type Profile = {
   id: string;
@@ -214,7 +212,7 @@ export default function AdminStores() {
 
           {message && <p className="text-sm text-cyan-300">{message}</p>}
 
-          <div className="ag-theme-alpine-dark" style={{ height: 360 }}>
+          <div style={{ height: 360 }}>
             <AgGridReact
               rowData={stores}
               columnDefs={columnDefs}
@@ -524,7 +522,7 @@ function StoreItemsTab({ storeId }: { storeId: string }) {
         </button>
       </div>
       {message && <p className="text-sm text-cyan-300">{message}</p>}
-      <div className="ag-theme-alpine-dark" style={{ height: 480 }}>
+      <div style={{ height: 480 }}>
         <AgGridReact
           rowData={rows}
           columnDefs={columnDefs}
@@ -711,7 +709,7 @@ function StoreFactoriesTab({ storeId }: { storeId: string }) {
 
       {message && <p className="text-sm text-cyan-300">{message}</p>}
 
-      <div className="ag-theme-alpine-dark" style={{ height: 360 }}>
+      <div style={{ height: 360 }}>
         <AgGridReact
           rowData={rows}
           columnDefs={columnDefs}

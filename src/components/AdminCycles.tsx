@@ -5,8 +5,6 @@ import type { FormEvent } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { AgGridReact } from "@/lib/agGrid";
 import type { ColDef, ICellRendererParams } from "ag-grid-community";
-import "ag-grid-community/styles/ag-grid.css";
-import "ag-grid-community/styles/ag-theme-alpine.css";
 
 type Profile = {
   id: string;
@@ -335,7 +333,7 @@ export default function AdminCycles() {
 
           {message && <p className="text-sm text-cyan-300">{message}</p>}
 
-          <div className="ag-theme-alpine-dark" style={{ height: 360 }}>
+          <div style={{ height: 360 }}>
             <AgGridReact
               rowData={cycles}
               columnDefs={columnDefs}
@@ -598,7 +596,7 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
       <p className="text-sm text-slate-400">
         Read-only view of what stores have entered for this cycle.
       </p>
-      <div className="ag-theme-alpine-dark" style={{ height: 480 }}>
+      <div style={{ height: 480 }}>
         <AgGridReact
           rowData={rows}
           columnDefs={columnDefs}
@@ -672,7 +670,7 @@ function FactoryCountsTab({ cycleId }: { cycleId: string }) {
       <p className="text-sm text-slate-400">
         Read-only view of what factories have reported for this cycle.
       </p>
-      <div className="ag-theme-alpine-dark" style={{ height: 480 }}>
+      <div style={{ height: 480 }}>
         <AgGridReact
           rowData={rows}
           columnDefs={columnDefs}
@@ -801,7 +799,7 @@ function AllocationsTab({ cycleId }: { cycleId: string }) {
           {message}
         </div>
       )}
-      <div className="ag-theme-alpine-dark" style={{ height: 440 }}>
+      <div style={{ height: 440 }}>
         <AgGridReact
           rowData={rows}
           columnDefs={columnDefs}
@@ -1067,7 +1065,7 @@ function OverridesTab({ cycleId }: { cycleId: string }) {
 
       {message && <p className="text-sm text-cyan-300">{message}</p>}
 
-      <div className="ag-theme-alpine-dark" style={{ height: 380 }}>
+      <div style={{ height: 380 }}>
         <AgGridReact
           rowData={rows}
           columnDefs={columnDefs}

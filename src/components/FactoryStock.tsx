@@ -4,8 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { AgGridReact } from "@/lib/agGrid";
 import type { ColDef } from "ag-grid-community";
-import "ag-grid-community/styles/ag-grid.css";
-import "ag-grid-community/styles/ag-theme-alpine.css";
 
 type Profile = {
   id: string;
@@ -443,7 +441,7 @@ export default function FactoryStock() {
 
           {message && <p className="text-sm text-cyan-300">{message}</p>}
 
-          <div className="ag-theme-alpine-dark" style={{ height: "calc(100vh - 300px)", minHeight: 500 }}>
+          <div style={{ height: "calc(100vh - 300px)", minHeight: 500 }}>
             <AgGridReact
               rowData={gridData}
               columnDefs={columnDefs}
