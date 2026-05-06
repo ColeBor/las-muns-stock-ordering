@@ -44,6 +44,23 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Refuse to finalize a cycle that has no allocations. Otherwise the user
+  // could lock a still-empty cycle into "finalized" by accident, and the
+  // run-allocations gate would then prevent them from recovering.
+  const { count: allocationCount, error: allocCountErr } = await supabaseAdmin
+    .from("allocations")
+    .select("*", { count: "exact", head: true })
+    .eq("cycle_id", cycle_id);
+  if (allocCountErr) {
+    return NextResponse.json({ error: allocCountErr.message }, { status: 500 });
+  }
+  if (!allocationCount) {
+    return NextResponse.json(
+      { error: "Run allocations before marking delivered" },
+      { status: 400 },
+    );
+  }
+
   const { data: splits, error: splitsErr } = await supabaseAdmin
     .from("allocation_factories")
     .select("factory_id,item_id,qty")

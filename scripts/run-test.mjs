@@ -96,7 +96,51 @@ async function printFactoryCounts() {
   }
 }
 
-if (action === "finalize") {
+if (action === "test16") {
+  const storeA = await getStore("TEST: Store A");
+  await sb.from("store_factories").delete().eq("store_id", storeA);
+  await runAllocations();
+  await printResult();
+} else if (action === "test17") {
+  const today = new Date().toISOString().slice(0, 10);
+  await sb.from("order_cycles").update({ order_date: today }).eq("id", cycleId);
+  // Skip running allocations entirely. Hit finalize directly.
+  const res = await fetch("http://localhost:3000/api/allocations/finalize", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cycle_id: cycleId }),
+  });
+  console.log("Finalize response:", JSON.stringify(await res.json(), null, 2));
+  const { data: status } = await sb
+    .from("order_cycles")
+    .select("status")
+    .eq("id", cycleId)
+    .single();
+  console.log("Cycle status now:", status?.status);
+} else if (action === "test18") {
+  const storeA = await getStore("TEST: Store A");
+  const itemM1 = await getItem("TEST-M1");
+  await sb
+    .from("factory_counts")
+    .update({ available_qty: 0 })
+    .eq("cycle_id", cycleId)
+    .eq("item_id", itemM1);
+  await sb.from("allocation_overrides").upsert(
+    [
+      {
+        cycle_id: cycleId,
+        store_id: storeA,
+        item_id: itemM1,
+        qty: 10,
+        reason: "test 18",
+        set_by: "script",
+      },
+    ],
+    { onConflict: "cycle_id,store_id,item_id" },
+  );
+  await runAllocations();
+  await printResult();
+} else if (action === "finalize") {
   // Run allocations first so there's something to decrement, then finalize.
   await runAllocations();
   const res = await fetch("http://localhost:3000/api/allocations/finalize", {
@@ -132,6 +176,6 @@ if (action === "finalize") {
 } else if (action === "result") {
   await printResult();
 } else {
-  console.error("usage: node scripts/run-test.mjs <test14|test15|finalize|result>");
+  console.error("usage: node scripts/run-test.mjs <test14|test15|test16|test17|test18|finalize|result>");
   process.exit(1);
 }

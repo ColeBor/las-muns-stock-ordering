@@ -731,6 +731,7 @@ function AllocationsTab({
   const [message, setMessage] = useState<string | null>(null);
   const isFinalized = cycleStatus === "finalized";
   const hasOrderDate = !!cycleOrderDate;
+  const hasAllocations = rows.length > 0;
 
   const reload = async () => {
     const { data } = await supabase
@@ -862,14 +863,16 @@ function AllocationsTab({
           </button>
           <button
             onClick={finalizeCycle}
-            disabled={finalizing || isFinalized || !hasOrderDate}
+            disabled={finalizing || isFinalized || !hasOrderDate || !hasAllocations}
             className="px-4 py-2 bg-amber-500 text-slate-950 rounded-full font-semibold disabled:opacity-50"
             title={
               isFinalized
                 ? "Already finalized"
                 : !hasOrderDate
                   ? "Set the cycle's order date on the Details tab before marking delivered"
-                  : undefined
+                  : !hasAllocations
+                    ? "Run allocations before marking delivered"
+                    : undefined
             }
           >
             {finalizing
