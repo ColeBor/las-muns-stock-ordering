@@ -72,6 +72,27 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "cycle_id is required" }, { status: 400 });
   }
 
+  // Block re-running on a finalized cycle. The factory_counts have already
+  // been decremented by the delivery finalize step; recomputing allocations
+  // would invalidate that decrement and break the audit trail.
+  const { data: cycleStatusRow, error: statusErr } = await supabaseAdmin
+    .from("order_cycles")
+    .select("status")
+    .eq("id", cycle_id)
+    .single();
+  if (statusErr || !cycleStatusRow) {
+    return NextResponse.json(
+      { error: statusErr?.message ?? "Cycle not found" },
+      { status: 404 },
+    );
+  }
+  if (cycleStatusRow.status === "finalized") {
+    return NextResponse.json(
+      { error: "Cycle is finalized — cannot re-run allocations" },
+      { status: 400 },
+    );
+  }
+
   const [
     stockRes,
     factoryRes,

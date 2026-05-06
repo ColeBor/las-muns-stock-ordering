@@ -442,6 +442,7 @@ export default function AdminCycles() {
                 <AllocationsTab
                   cycleId={selectedCycle.id}
                   cycleStatus={selectedCycle.status}
+                  cycleOrderDate={selectedCycle.order_date}
                   onFinalized={reloadCycles}
                 />
               )}
@@ -716,10 +717,12 @@ type AllocationRow = {
 function AllocationsTab({
   cycleId,
   cycleStatus,
+  cycleOrderDate,
   onFinalized,
 }: {
   cycleId: string;
   cycleStatus: string;
+  cycleOrderDate: string | null;
   onFinalized: () => Promise<void> | void;
 }) {
   const [rows, setRows] = useState<AllocationRow[]>([]);
@@ -727,6 +730,7 @@ function AllocationsTab({
   const [finalizing, setFinalizing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const isFinalized = cycleStatus === "finalized";
+  const hasOrderDate = !!cycleOrderDate;
 
   const reload = async () => {
     const { data } = await supabase
@@ -858,9 +862,15 @@ function AllocationsTab({
           </button>
           <button
             onClick={finalizeCycle}
-            disabled={finalizing || isFinalized}
+            disabled={finalizing || isFinalized || !hasOrderDate}
             className="px-4 py-2 bg-amber-500 text-slate-950 rounded-full font-semibold disabled:opacity-50"
-            title={isFinalized ? "Already finalized" : undefined}
+            title={
+              isFinalized
+                ? "Already finalized"
+                : !hasOrderDate
+                  ? "Set the cycle's order date on the Details tab before marking delivered"
+                  : undefined
+            }
           >
             {finalizing
               ? "Marking..."

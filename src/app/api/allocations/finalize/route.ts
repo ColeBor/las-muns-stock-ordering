@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
 
   const { data: cycle, error: cycleErr } = await supabaseAdmin
     .from("order_cycles")
-    .select("status")
+    .select("status,order_date")
     .eq("id", cycle_id)
     .single();
   if (cycleErr || !cycle) {
@@ -36,6 +36,12 @@ export async function POST(request: NextRequest) {
   }
   if (cycle.status === "finalized") {
     return NextResponse.json({ error: "Cycle already finalized" }, { status: 400 });
+  }
+  if (!cycle.order_date) {
+    return NextResponse.json(
+      { error: "Cycle must have an order_date set before marking delivered" },
+      { status: 400 },
+    );
   }
 
   const { data: splits, error: splitsErr } = await supabaseAdmin
