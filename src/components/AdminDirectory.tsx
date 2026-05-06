@@ -16,29 +16,29 @@ const LABELS: Record<DirectoryKind, string> = {
 export default function AdminDirectory() {
   const [kind, setKind] = useState<DirectoryKind>("stores");
 
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <label htmlFor="directory-kind" className="text-sm text-slate-300">
-          View:
-        </label>
-        <select
-          id="directory-kind"
-          value={kind}
-          onChange={(e) => setKind(e.target.value as DirectoryKind)}
-          className="rounded-2xl border border-white/10 bg-slate-950 px-4 py-2 text-sm text-white outline-none focus:border-cyan-400"
-        >
-          {(Object.keys(LABELS) as DirectoryKind[]).map((k) => (
-            <option key={k} value={k}>
-              {LABELS[k]}
-            </option>
-          ))}
-        </select>
-      </div>
+  const selector = (
+    <div className="flex items-center gap-2">
+      <span className="text-sm text-slate-400">View:</span>
+      <select
+        value={kind}
+        onChange={(e) => setKind(e.target.value as DirectoryKind)}
+        className="rounded-full border border-white/10 bg-slate-900 px-3 py-1.5 text-xl font-semibold text-white outline-none focus:border-cyan-400"
+      >
+        {(Object.keys(LABELS) as DirectoryKind[]).map((k) => (
+          <option key={k} value={k}>
+            {LABELS[k]}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
 
-      {kind === "stores" && <AdminStores />}
-      {kind === "factories" && <AdminFactories />}
-      {kind === "suppliers" && <AdminSuppliers />}
+  return (
+    <div className="space-y-4">
+      <h1 className="text-3xl font-semibold text-white">Directory</h1>
+      {kind === "stores" && <AdminStores viewSelector={selector} />}
+      {kind === "factories" && <AdminFactories viewSelector={selector} />}
+      {kind === "suppliers" && <AdminSuppliers viewSelector={selector} />}
     </div>
   );
 }

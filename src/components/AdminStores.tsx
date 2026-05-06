@@ -23,7 +23,11 @@ type Store = {
 
 type TabKey = "details" | "items" | "factories";
 
-export default function AdminStores() {
+export default function AdminStores({
+  viewSelector,
+}: {
+  viewSelector?: React.ReactNode;
+} = {}) {
   const [session, setSession] = useState<Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"] | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [stores, setStores] = useState<Store[]>([]);
@@ -178,10 +182,14 @@ export default function AdminStores() {
 
   return (
     <section className="rounded-3xl border border-white/10 bg-slate-950/90 p-8 text-slate-100 shadow-lg shadow-slate-950/20">
-      <h1 className="text-3xl font-semibold text-white">Admin: Stores</h1>
-      <p className="mt-3 text-slate-400">
-        Manage stores, the items each store carries, and which factories ship to it.
-      </p>
+      {!viewSelector && (
+        <>
+          <h1 className="text-3xl font-semibold text-white">Admin: Stores</h1>
+          <p className="mt-3 text-slate-400">
+            Manage stores, the items each store carries, and which factories ship to it.
+          </p>
+        </>
+      )}
 
       {!isSignedIn ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
@@ -193,8 +201,10 @@ export default function AdminStores() {
         </div>
       ) : (
         <div className="mt-8 space-y-6">
-          <div className="flex justify-between items-center">
-            <h2 className="text-xl font-semibold text-white">Stores</h2>
+          <div className="flex flex-wrap justify-between items-center gap-3">
+            {viewSelector ?? (
+              <h2 className="text-xl font-semibold text-white">Stores</h2>
+            )}
             <button
               onClick={() => {
                 setEditingStore(null);

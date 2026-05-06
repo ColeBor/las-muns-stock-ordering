@@ -20,7 +20,11 @@ type Supplier = {
   created_at: string;
 };
 
-export default function AdminSuppliers() {
+export default function AdminSuppliers({
+  viewSelector,
+}: {
+  viewSelector?: React.ReactNode;
+} = {}) {
   const [session, setSession] = useState<Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"] | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -198,10 +202,14 @@ export default function AdminSuppliers() {
 
   return (
     <section className="rounded-3xl border border-white/10 bg-slate-950/90 p-8 text-slate-100 shadow-lg shadow-slate-950/20">
-      <h1 className="text-3xl font-semibold text-white">Admin: Manage Suppliers</h1>
-      <p className="mt-3 text-slate-400">
-        HQ administrators can create, edit, and delete suppliers.
-      </p>
+      {!viewSelector && (
+        <>
+          <h1 className="text-3xl font-semibold text-white">Admin: Manage Suppliers</h1>
+          <p className="mt-3 text-slate-400">
+            HQ administrators can create, edit, and delete suppliers.
+          </p>
+        </>
+      )}
 
       {!isSignedIn ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
@@ -213,8 +221,10 @@ export default function AdminSuppliers() {
         </div>
       ) : (
         <div className="mt-8 space-y-6">
-          <div className="flex justify-between items-center">
-            <h2 className="text-xl font-semibold text-white">Suppliers</h2>
+          <div className="flex flex-wrap justify-between items-center gap-3">
+            {viewSelector ?? (
+              <h2 className="text-xl font-semibold text-white">Suppliers</h2>
+            )}
             <button
               onClick={() => {
                 setEditingSupplier(null);
