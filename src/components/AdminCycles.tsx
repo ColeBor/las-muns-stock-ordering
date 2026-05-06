@@ -505,9 +505,29 @@ function CycleEditForm(props: {
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-slate-300 mb-2">
-          Participating stores (cycle_stores)
-        </label>
+        <div className="mb-2 flex items-center justify-between">
+          <label className="block text-sm font-medium text-slate-300">
+            Participating stores (cycle_stores)
+          </label>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                props.setSelectedStoreIds(props.stores.map((s) => s.id))
+              }
+              className="px-2 py-1 text-xs bg-emerald-500 text-slate-950 rounded font-semibold"
+            >
+              Select all
+            </button>
+            <button
+              type="button"
+              onClick={() => props.setSelectedStoreIds([])}
+              className="px-2 py-1 text-xs border border-white/10 text-slate-300 rounded"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
         <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border border-white/10 rounded-2xl p-4 bg-slate-950">
           {props.stores.map((store) => (
             <label key={store.id} className="flex items-center">
