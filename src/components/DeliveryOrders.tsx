@@ -262,7 +262,7 @@ export default function DeliveryOrders() {
             >
               {cycles.map((cycleOption) => (
                 <option key={cycleOption.id} value={cycleOption.id}>
-                  {cycleOption.name} ({cycleOption.status})
+                  {cycleOption.name} ({cycleOption.status.charAt(0).toUpperCase() + cycleOption.status.slice(1)})
                 </option>
               ))}
             </select>

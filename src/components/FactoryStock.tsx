@@ -450,7 +450,7 @@ export default function FactoryStock() {
               >
                 {cycles.map((cycle) => (
                   <option key={cycle.id} value={cycle.id}>
-                    {cycle.name} ({cycle.status})
+                    {cycle.name} ({cycle.status.charAt(0).toUpperCase() + cycle.status.slice(1)})
                   </option>
                 ))}
               </select>

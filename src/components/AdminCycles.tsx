@@ -86,7 +86,15 @@ export default function AdminCycles() {
       .from("order_cycles")
       .select("*, cycle_stores(stores(id, name))")
       .order("created_at", { ascending: false });
-    if (data) setCycles(data as OrderCycle[]);
+    if (!data) return;
+    // Active cycles (draft / allocated) first, delivered (archived) last.
+    const sorted = [...(data as OrderCycle[])].sort((a, b) => {
+      const aDelivered = a.status === "delivered" ? 1 : 0;
+      const bDelivered = b.status === "delivered" ? 1 : 0;
+      if (aDelivered !== bDelivered) return aDelivered - bDelivered;
+      return 0; // preserve created_at desc within each group
+    });
+    setCycles(sorted);
   };
 
   useEffect(() => {
@@ -224,7 +232,15 @@ export default function AdminCycles() {
 
   const columnDefs: ColDef<OrderCycle>[] = [
     { headerName: "Name", field: "name", sortable: true, filter: true, flex: 2, minWidth: 150 },
-    { headerName: "Status", field: "status", sortable: true, filter: true, width: 110 },
+    {
+      headerName: "Status",
+      field: "status",
+      sortable: true,
+      filter: true,
+      width: 110,
+      valueFormatter: (p) =>
+        p.value ? p.value.charAt(0).toUpperCase() + p.value.slice(1) : "",
+    },
     {
       headerName: "Order date",
       field: "order_date",
@@ -247,20 +263,26 @@ export default function AdminCycles() {
       headerName: "Actions",
       width: 180,
       cellRenderer: (params: ICellRendererParams<OrderCycle>) => (
-        <div className="flex gap-2">
+        <div
+          className={`flex h-full items-center gap-2 ${
+            params.data!.status === "delivered" ? "justify-center" : ""
+          }`}
+        >
           <button
             onClick={() => openManagePanel(params.data!)}
             className="px-2 py-1 text-xs bg-cyan-500 text-slate-950 rounded font-semibold"
           >
-            Manage
+            {params.data!.status === "delivered" ? "Review" : "Manage"}
           </button>
-          <button
-            onClick={() => handleDelete(params.data!)}
-            className="px-2 py-1 text-xs bg-red-500 text-white rounded"
-            disabled={params.data!.status !== "draft"}
-          >
-            Delete
-          </button>
+          {params.data!.status !== "delivered" && (
+            <button
+              onClick={() => handleDelete(params.data!)}
+              className="px-2 py-1 text-xs bg-red-500 text-white rounded"
+              disabled={params.data!.status !== "draft"}
+            >
+              Delete
+            </button>
+          )}
         </div>
       ),
     },
@@ -331,9 +353,9 @@ export default function AdminCycles() {
             <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-semibold text-white">
-                  Manage: {selectedCycle.name}{" "}
+                  {selectedCycle.status === "delivered" ? "Review" : "Manage"}: {selectedCycle.name}{" "}
                   <span className="text-sm font-normal text-slate-400">
-                    ({selectedCycle.status})
+                    ({selectedCycle.status.charAt(0).toUpperCase() + selectedCycle.status.slice(1)})
                   </span>
                 </h2>
                 <button
@@ -379,6 +401,7 @@ export default function AdminCycles() {
                   selectedStoreIds={selectedStoreIds}
                   stores={stores}
                   loading={loading}
+                  readOnly={selectedCycle.status === "delivered"}
                   setName={setName}
                   setOrderDate={setOrderDate}
                   setSelectedStoreIds={setSelectedStoreIds}
@@ -396,7 +419,12 @@ export default function AdminCycles() {
                   onFinalized={reloadCycles}
                 />
               )}
-              {activeTab === "overrides" && <OverridesTab cycleId={selectedCycle.id} />}
+              {activeTab === "overrides" && (
+                <OverridesTab
+                  cycleId={selectedCycle.id}
+                  readOnly={selectedCycle.status === "delivered"}
+                />
+              )}
             </div>
           )}
         </div>
@@ -412,16 +440,22 @@ function CycleEditForm(props: {
   selectedStoreIds: string[];
   stores: Store[];
   loading: boolean;
+  readOnly?: boolean;
   setName: (v: string) => void;
   setOrderDate: (v: string) => void;
   setSelectedStoreIds: (v: string[]) => void;
   onSubmit: (e: FormEvent<HTMLFormElement>) => void;
   onCancel: () => void;
 }) {
+  const ro = !!props.readOnly;
   return (
     <form onSubmit={props.onSubmit} className="rounded-2xl bg-slate-950/60 p-6 space-y-4">
       <h3 className="text-lg font-semibold text-white">
-        {props.editing ? "Edit Cycle" : "Create New Cycle"}
+        {ro
+          ? "Cycle details (read-only)"
+          : props.editing
+            ? "Edit Cycle"
+            : "Create New Cycle"}
       </h3>
 
       <div>
@@ -430,7 +464,8 @@ function CycleEditForm(props: {
           type="text"
           value={props.name}
           onChange={(e) => props.setName(e.target.value)}
-          className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
+          disabled={ro}
+          className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400 disabled:opacity-60 disabled:cursor-not-allowed"
           required
         />
       </div>
@@ -442,7 +477,8 @@ function CycleEditForm(props: {
           value={props.orderDate}
           onChange={(e) => props.setOrderDate(e.target.value)}
           onKeyDown={(e) => e.preventDefault()}
-          className="mt-1 rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400 cursor-pointer"
+          disabled={ro}
+          className="mt-1 rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
         />
       </div>
 
@@ -451,24 +487,26 @@ function CycleEditForm(props: {
           <label className="block text-sm font-medium text-slate-300">
             Participating stores (cycle_stores)
           </label>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() =>
-                props.setSelectedStoreIds(props.stores.map((s) => s.id))
-              }
-              className="px-2 py-1 text-xs bg-emerald-500 text-slate-950 rounded font-semibold"
-            >
-              Select all
-            </button>
-            <button
-              type="button"
-              onClick={() => props.setSelectedStoreIds([])}
-              className="px-2 py-1 text-xs border border-white/10 text-slate-300 rounded"
-            >
-              Clear
-            </button>
-          </div>
+          {!ro && (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  props.setSelectedStoreIds(props.stores.map((s) => s.id))
+                }
+                className="px-2 py-1 text-xs bg-emerald-500 text-slate-950 rounded font-semibold"
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                onClick={() => props.setSelectedStoreIds([])}
+                className="px-2 py-1 text-xs border border-white/10 text-slate-300 rounded"
+              >
+                Clear
+              </button>
+            </div>
+          )}
         </div>
         <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border border-white/10 rounded-2xl p-4 bg-slate-950">
           {props.stores.map((store) => (
@@ -485,7 +523,8 @@ function CycleEditForm(props: {
                     );
                   }
                 }}
-                className="mr-2"
+                disabled={ro}
+                className="mr-2 disabled:cursor-not-allowed"
               />
               <span className="text-sm text-slate-300">
                 {store.name} {store.is_high_volume ? "(HV)" : ""}
@@ -496,15 +535,17 @@ function CycleEditForm(props: {
       </div>
 
       <div className="flex gap-2">
-        <button
-          type="submit"
-          disabled={props.loading}
-          className="px-4 py-2 bg-cyan-500 text-slate-950 rounded-full font-semibold"
-        >
-          {props.loading ? "Saving..." : props.editing ? "Update" : "Create"}
-        </button>
+        {!ro && (
+          <button
+            type="submit"
+            disabled={props.loading}
+            className="px-4 py-2 bg-cyan-500 text-slate-950 rounded-full font-semibold"
+          >
+            {props.loading ? "Saving..." : props.editing ? "Update" : "Create"}
+          </button>
+        )}
         <button type="button" onClick={props.onCancel} className="px-4 py-2 bg-slate-600 text-white rounded-full">
-          Cancel
+          {ro ? "Close" : "Cancel"}
         </button>
       </div>
     </form>
@@ -861,7 +902,13 @@ type OverrideRow = {
   item_name: string;
 };
 
-function OverridesTab({ cycleId }: { cycleId: string }) {
+function OverridesTab({
+  cycleId,
+  readOnly = false,
+}: {
+  cycleId: string;
+  readOnly?: boolean;
+}) {
   const [overrides, setOverrides] = useState<
     Array<{ cycle_id: string; store_id: string; item_id: string; qty: number; reason: string | null; set_by: string | null }>
   >([]);
@@ -980,48 +1027,54 @@ function OverridesTab({ cycleId }: { cycleId: string }) {
     { headerName: "Qty", field: "qty", sortable: true, filter: true, width: 90 },
     { headerName: "Reason", field: "reason", sortable: true, filter: true, flex: 1, minWidth: 120 },
     { headerName: "Set by", field: "set_by", sortable: true, filter: true, flex: 1, minWidth: 130 },
-    {
-      headerName: "Actions",
-      width: 160,
-      cellRenderer: (params: { data: OverrideRow }) => (
-        <div className="flex gap-2">
-          <button
-            onClick={() => handleEdit(params.data)}
-            className="px-2 py-1 text-xs bg-blue-500 text-white rounded"
-          >
-            Edit
-          </button>
-          <button
-            onClick={() => handleDelete(params.data)}
-            className="px-2 py-1 text-xs bg-red-500 text-white rounded"
-          >
-            Delete
-          </button>
-        </div>
-      ),
-    },
+    ...(readOnly
+      ? []
+      : [
+          {
+            headerName: "Actions",
+            width: 160,
+            cellRenderer: (params: { data: OverrideRow }) => (
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleEdit(params.data)}
+                  className="px-2 py-1 text-xs bg-blue-500 text-white rounded"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => handleDelete(params.data)}
+                  className="px-2 py-1 text-xs bg-red-500 text-white rounded"
+                >
+                  Delete
+                </button>
+              </div>
+            ),
+          } as ColDef<OverrideRow>,
+        ]),
   ];
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-slate-400">
-          Force a specific qty for (store, item). Allocation pulls from factories using
-          the override qty; on the next run the override appears as
-          source=manual_override.
+          {readOnly
+            ? "Read-only — overrides for this delivered cycle are locked."
+            : "Force a specific qty for (store, item). Allocation pulls from factories using the override qty; on the next run the override appears as source=manual_override."}
         </p>
-        <button
-          onClick={() => {
-            resetForm();
-            setShowForm(true);
-          }}
-          className="px-4 py-2 bg-cyan-500 text-slate-950 rounded-full font-semibold"
-        >
-          Add override
-        </button>
+        {!readOnly && (
+          <button
+            onClick={() => {
+              resetForm();
+              setShowForm(true);
+            }}
+            className="px-4 py-2 bg-cyan-500 text-slate-950 rounded-full font-semibold"
+          >
+            Add override
+          </button>
+        )}
       </div>
 
-      {showForm && (
+      {showForm && !readOnly && (
         <form onSubmit={handleSubmit} className="rounded-2xl bg-slate-950/60 p-6 space-y-4">
           <h3 className="text-lg font-semibold text-white">
             {editingKey ? "Edit Override" : "Add Override"}
