@@ -32,8 +32,8 @@ async function getStore(name) {
   const { data } = await sb.from("stores").select("id").eq("name", name).single();
   return data.id;
 }
-async function getItem(sku) {
-  const { data } = await sb.from("items").select("id").eq("sku", sku).single();
+async function getItem(name) {
+  const { data } = await sb.from("items").select("id").eq("name", name).single();
   return data.id;
 }
 
@@ -53,7 +53,7 @@ async function printResult() {
   const { data: allocs } = await sb
     .from("allocations")
     .select(
-      "qty,shortfall,source,factory_id,stores(name),items(sku),factories!allocations_factory_id_fkey(name)",
+      "qty,shortfall,source,factory_id,stores(name),items(name),factories!allocations_factory_id_fkey(name)",
     )
     .eq("cycle_id", cycleId);
 
@@ -64,13 +64,13 @@ async function printResult() {
 
   const { data: pos } = await sb
     .from("po_lines")
-    .select("qty,items(sku),purchase_orders!inner(suppliers(name),cycle_id)")
+    .select("qty,items(name),purchase_orders!inner(suppliers(name),cycle_id)")
     .eq("purchase_orders.cycle_id", cycleId);
 
   console.log("\n=== allocations ===");
   for (const a of allocs ?? []) {
     console.log(
-      `${a.stores.name} / ${a.items.sku}: qty=${a.qty}, shortfall=${a.shortfall}, source=${a.source}, factory=${a.factories?.name ?? "—"}`,
+      `${a.stores.name} / ${a.items.name}: qty=${a.qty}, shortfall=${a.shortfall}, source=${a.source}, factory=${a.factories?.name ?? "—"}`,
     );
   }
   console.log("\n=== splits ===");
@@ -81,18 +81,18 @@ async function printResult() {
   }
   console.log("\n=== po_lines ===");
   for (const p of pos ?? []) {
-    console.log(`${p.purchase_orders.suppliers.name} / ${p.items.sku}: ${p.qty}`);
+    console.log(`${p.purchase_orders.suppliers.name} / ${p.items.name}: ${p.qty}`);
   }
 }
 
 async function printFactoryCounts() {
   const { data } = await sb
     .from("factory_counts")
-    .select("available_qty,factories(name),items(sku)")
+    .select("available_qty,factories(name),items(name)")
     .eq("cycle_id", cycleId);
-  console.log("\n=== factory_counts (post-finalize) ===");
+  console.log("\n=== factory_counts ===");
   for (const c of data ?? []) {
-    console.log(`${c.factories.name} / ${c.items.sku}: ${c.available_qty}`);
+    console.log(`${c.factories.name} / ${c.items.name}: ${c.available_qty}`);
   }
 }
 
@@ -119,7 +119,7 @@ if (action === "test16") {
   console.log("Cycle status now:", status?.status);
 } else if (action === "test18") {
   const storeA = await getStore("TEST: Store A");
-  const itemM1 = await getItem("TEST-M1");
+  const itemM1 = await getItem("TEST: Manufactured Empanada");
   await sb
     .from("factory_counts")
     .update({ available_qty: 0 })
@@ -153,7 +153,7 @@ if (action === "test16") {
   await printFactoryCounts();
 } else if (action === "test14") {
   const storeA = await getStore("TEST: Store A");
-  const itemM1 = await getItem("TEST-M1");
+  const itemM1 = await getItem("TEST: Manufactured Empanada");
   await sb.from("allocation_overrides").upsert(
     [
       {

@@ -72,9 +72,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "cycle_id is required" }, { status: 400 });
   }
 
-  // Block re-running on a finalized cycle. The factory_counts have already
-  // been decremented by the delivery finalize step; recomputing allocations
-  // would invalidate that decrement and break the audit trail.
+  // Block re-running on a delivered cycle. The factory_counts have already
+  // been decremented by the delivery step; recomputing allocations would
+  // invalidate that decrement and break the audit trail.
   const { data: cycleStatusRow, error: statusErr } = await supabaseAdmin
     .from("order_cycles")
     .select("status")
@@ -86,9 +86,36 @@ export async function POST(request: NextRequest) {
       { status: 404 },
     );
   }
-  if (cycleStatusRow.status === "finalized") {
+  if (cycleStatusRow.status === "delivered") {
     return NextResponse.json(
-      { error: "Cycle is finalized — cannot re-run allocations" },
+      { error: "Cycle is delivered — cannot re-run allocations" },
+      { status: 400 },
+    );
+  }
+
+  // Every participating store must have marked its stock entry finished
+  // before allocations can run. This protects against the admin running
+  // allocations on a half-submitted cycle.
+  const { data: cycleStoresRows, error: csErr } = await supabaseAdmin
+    .from("cycle_stores")
+    .select("store_id,finished_at,stores(name)")
+    .eq("cycle_id", cycle_id);
+  if (csErr) {
+    return NextResponse.json({ error: csErr.message }, { status: 500 });
+  }
+  const unfinished = (cycleStoresRows ?? []).filter((cs) => !cs.finished_at) as Array<{
+    store_id: string;
+    finished_at: string | null;
+    stores: { name: string } | null;
+  }>;
+  if (unfinished.length > 0) {
+    const names = unfinished
+      .map((cs) => cs.stores?.name ?? cs.store_id)
+      .sort();
+    return NextResponse.json(
+      {
+        error: `Waiting on ${names.length} store${names.length === 1 ? "" : "s"} to mark their stock entry finished: ${names.join(", ")}`,
+      },
       { status: 400 },
     );
   }
@@ -371,6 +398,16 @@ export async function POST(request: NextRequest) {
     (sum, a) => sum + (a.shortfall > 0 ? 1 : 0),
     0,
   );
+
+  // Promote draft → allocated. Re-runs leave 'allocated' as-is.
+  const { error: promoteErr } = await supabaseAdmin
+    .from("order_cycles")
+    .update({ status: "allocated" })
+    .eq("id", cycle_id)
+    .neq("status", "delivered");
+  if (promoteErr) {
+    return NextResponse.json({ error: promoteErr.message }, { status: 500 });
+  }
 
   return NextResponse.json({
     message: "Allocations completed",

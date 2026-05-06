@@ -70,6 +70,8 @@ export default function StoreStockEntry() {
   const [gridData, setGridData] = useState<StockEntryRow[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [finishedAt, setFinishedAt] = useState<string | null>(null);
+  const [finishToggling, setFinishToggling] = useState(false);
 
   const isSignedIn = useMemo(() => !!session?.user, [session]);
   const isHQAdmin = useMemo(() => profile?.role === "hq_admin", [profile]);
@@ -134,6 +136,44 @@ export default function StoreStockEntry() {
     };
     loadStores();
   }, [isHQAdmin]);
+
+  // Load this (cycle, store)'s finished_at so we know whether the
+  // employee has already marked their stock entry done for this cycle.
+  useEffect(() => {
+    if (!selectedCycleId || !effectiveStoreId) {
+      setFinishedAt(null);
+      return;
+    }
+    const loadFinished = async () => {
+      const { data } = await supabase
+        .from("cycle_stores")
+        .select("finished_at")
+        .eq("cycle_id", selectedCycleId)
+        .eq("store_id", effectiveStoreId)
+        .maybeSingle();
+      setFinishedAt(data?.finished_at ?? null);
+    };
+    loadFinished();
+  }, [selectedCycleId, effectiveStoreId]);
+
+  const toggleFinished = async () => {
+    if (!selectedCycleId || !effectiveStoreId) return;
+    setFinishToggling(true);
+    setMessage(null);
+    const newValue = finishedAt ? null : new Date().toISOString();
+    const { error } = await supabase
+      .from("cycle_stores")
+      .update({ finished_at: newValue })
+      .eq("cycle_id", selectedCycleId)
+      .eq("store_id", effectiveStoreId);
+    setFinishToggling(false);
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+    setFinishedAt(newValue);
+    setMessage(newValue ? "Marked as finished." : "Reopened for editing.");
+  };
 
   useEffect(() => {
     if (!canManage || !effectiveStoreId) {
@@ -377,14 +417,32 @@ export default function StoreStockEntry() {
             </div>
           </div>
 
-          <p className="text-sm text-slate-400">
-            Order date:{" "}
-            <span className="text-slate-200">
-              {selectedCycle?.order_date
-                ? new Date(selectedCycle.order_date).toLocaleDateString()
-                : "Not set — ask management to set it on the cycle"}
-            </span>
-          </p>
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <p className="text-sm text-slate-400">
+              Order date:{" "}
+              <span className="text-slate-200">
+                {selectedCycle?.order_date
+                  ? new Date(selectedCycle.order_date).toLocaleDateString()
+                  : "Not set — ask management to set it on the cycle"}
+              </span>
+            </p>
+            <button
+              type="button"
+              onClick={toggleFinished}
+              disabled={finishToggling || !selectedCycleId || !effectiveStoreId}
+              className={`px-4 py-2 rounded-full font-semibold text-sm disabled:opacity-50 ${
+                finishedAt
+                  ? "bg-slate-700 text-slate-200 hover:bg-slate-600"
+                  : "bg-emerald-500 text-slate-950 hover:bg-emerald-400"
+              }`}
+            >
+              {finishToggling
+                ? "Saving..."
+                : finishedAt
+                  ? "Finished ✓ — click to reopen"
+                  : "Mark as finished"}
+            </button>
+          </div>
 
           {message && <p className="text-sm text-cyan-300">{message}</p>}
 

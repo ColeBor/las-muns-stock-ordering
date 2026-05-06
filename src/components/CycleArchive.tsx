@@ -91,7 +91,7 @@ export default function CycleArchive() {
       const cyclesRes = await supabase
         .from("order_cycles")
         .select("id,name,order_date,created_at")
-        .eq("status", "finalized")
+        .eq("status", "delivered")
         .order("order_date", { ascending: false, nullsFirst: false });
       const cycleIds = (cyclesRes.data ?? []).map((c) => c.id);
       if (cycleIds.length === 0) {
@@ -157,7 +157,7 @@ export default function CycleArchive() {
     <section className="rounded-3xl border border-white/10 bg-slate-950/90 p-8 text-slate-100 shadow-lg shadow-slate-950/20">
       <h1 className="text-3xl font-semibold text-white">Cycle archive</h1>
       <p className="mt-3 text-slate-400">
-        Past finalized cycles. Click into one for the full read-only details,
+        Past delivered cycles. Click into one for the full read-only details,
         allocations, and factory counts.
       </p>
 
@@ -173,7 +173,7 @@ export default function CycleArchive() {
         <p className="mt-8 text-slate-400">Loading…</p>
       ) : summaries.length === 0 ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
-          <p>No finalized cycles yet. Mark a cycle delivered to start building history.</p>
+          <p>No delivered cycles yet. Mark a cycle delivered to start building history.</p>
         </div>
       ) : (
         <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -186,7 +186,7 @@ export default function CycleArchive() {
               <div className="flex items-start justify-between gap-2">
                 <h2 className="text-lg font-semibold text-white">{s.name}</h2>
                 <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-xs font-semibold text-amber-300">
-                  Finalized
+                  Delivered
                 </span>
               </div>
               <p className="mt-2 text-sm text-slate-400">

@@ -120,10 +120,13 @@ on conflict do nothing;
 delete from public.cycle_stores
 where cycle_id = (select id from public.order_cycles where name = 'TEST: Allocation scenario');
 
-insert into public.cycle_stores (cycle_id, store_id)
+-- Seed marks both stores as already finished so /api/allocations/run can be
+-- triggered without first clicking "Mark as finished" in each store's UI.
+insert into public.cycle_stores (cycle_id, store_id, finished_at)
 select
   (select id from public.order_cycles where name = 'TEST: Allocation scenario'),
-  s.id
+  s.id,
+  now()
 from public.stores s
 where s.name in ('TEST: Store A', 'TEST: Store B');
 

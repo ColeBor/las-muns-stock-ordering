@@ -40,7 +40,6 @@ export default function AdminCycles() {
   const [showForm, setShowForm] = useState(false);
   const [editingCycle, setEditingCycle] = useState<OrderCycle | null>(null);
   const [name, setName] = useState("");
-  const [status, setStatus] = useState<"draft" | "active" | "allocated" | "finalized">("draft");
   const [orderDate, setOrderDate] = useState<string>("");
   const [selectedStoreIds, setSelectedStoreIds] = useState<string[]>([]);
   const [message, setMessage] = useState<string | null>(null);
@@ -117,9 +116,11 @@ export default function AdminCycles() {
     setLoading(true);
     setMessage(null);
 
+    // Status is machine-driven (draft → allocated → delivered) so we never
+    // include it in the upsert. Inserts let the DB default to 'draft';
+    // updates leave whatever the run/finalize endpoints set.
     const cycleData = {
       name: name.trim(),
-      status,
       order_date: orderDate || null,
       created_by: session?.user?.email || null,
     };
@@ -171,7 +172,6 @@ export default function AdminCycles() {
     setShowForm(false);
     setEditingCycle(null);
     setName("");
-    setStatus("draft");
     setOrderDate("");
     setSelectedStoreIds([]);
     await reloadCycles();
@@ -180,7 +180,6 @@ export default function AdminCycles() {
   const handleEdit = (cycle: OrderCycle) => {
     setEditingCycle(cycle);
     setName(cycle.name);
-    setStatus(cycle.status as "draft" | "active" | "allocated" | "finalized");
     setOrderDate(cycle.order_date ?? "");
     setSelectedStoreIds(cycle.cycle_stores?.map((cs) => cs.stores.id) || []);
     setShowForm(true);
@@ -200,19 +199,6 @@ export default function AdminCycles() {
     setMessage("Cycle deleted.");
     if (selectedCycleId === cycle.id) setSelectedCycleId(null);
     setCycles(cycles.filter((c) => c.id !== cycle.id));
-  };
-
-  const handleStatusChange = async (cycle: OrderCycle, newStatus: string) => {
-    const { error } = await supabase
-      .from("order_cycles")
-      .update({ status: newStatus })
-      .eq("id", cycle.id);
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-    setMessage(`Cycle status updated to ${newStatus}.`);
-    setCycles(cycles.map((c) => (c.id === cycle.id ? { ...c, status: newStatus } : c)));
   };
 
   const openManagePanel = (cycle: OrderCycle) => {
@@ -259,7 +245,7 @@ export default function AdminCycles() {
     },
     {
       headerName: "Actions",
-      width: 320,
+      width: 180,
       cellRenderer: (params: ICellRendererParams<OrderCycle>) => (
         <div className="flex gap-2">
           <button
@@ -275,30 +261,6 @@ export default function AdminCycles() {
           >
             Delete
           </button>
-          {params.data!.status === "draft" && (
-            <button
-              onClick={() => handleStatusChange(params.data!, "active")}
-              className="px-2 py-1 text-xs bg-green-500 text-white rounded"
-            >
-              Activate
-            </button>
-          )}
-          {params.data!.status === "active" && (
-            <button
-              onClick={() => handleStatusChange(params.data!, "allocated")}
-              className="px-2 py-1 text-xs bg-purple-500 text-white rounded"
-            >
-              Mark allocated
-            </button>
-          )}
-          {params.data!.status === "allocated" && (
-            <button
-              onClick={() => handleStatusChange(params.data!, "finalized")}
-              className="px-2 py-1 text-xs bg-orange-500 text-white rounded"
-            >
-              Finalize
-            </button>
-          )}
         </div>
       ),
     },
@@ -328,7 +290,6 @@ export default function AdminCycles() {
               onClick={() => {
                 setEditingCycle(null);
                 setName("");
-                setStatus("draft");
                 setOrderDate("");
                 setSelectedStoreIds([]);
                 setShowForm(true);
@@ -354,13 +315,11 @@ export default function AdminCycles() {
             <CycleEditForm
               editing={editingCycle}
               name={name}
-              status={status}
               orderDate={orderDate}
               selectedStoreIds={selectedStoreIds}
               stores={stores}
               loading={loading}
               setName={setName}
-              setStatus={setStatus}
               setOrderDate={setOrderDate}
               setSelectedStoreIds={setSelectedStoreIds}
               onSubmit={handleSubmit}
@@ -416,13 +375,11 @@ export default function AdminCycles() {
                 <CycleEditForm
                   editing={editingCycle}
                   name={name}
-                  status={status}
                   orderDate={orderDate}
                   selectedStoreIds={selectedStoreIds}
                   stores={stores}
                   loading={loading}
                   setName={setName}
-                  setStatus={setStatus}
                   setOrderDate={setOrderDate}
                   setSelectedStoreIds={setSelectedStoreIds}
                   onSubmit={handleSubmit}
@@ -451,13 +408,11 @@ export default function AdminCycles() {
 function CycleEditForm(props: {
   editing: OrderCycle | null;
   name: string;
-  status: "draft" | "active" | "allocated" | "finalized";
   orderDate: string;
   selectedStoreIds: string[];
   stores: Store[];
   loading: boolean;
   setName: (v: string) => void;
-  setStatus: (v: "draft" | "active" | "allocated" | "finalized") => void;
   setOrderDate: (v: string) => void;
   setSelectedStoreIds: (v: string[]) => void;
   onSubmit: (e: FormEvent<HTMLFormElement>) => void;
@@ -478,20 +433,6 @@ function CycleEditForm(props: {
           className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
           required
         />
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium text-slate-300">Status</label>
-        <select
-          value={props.status}
-          onChange={(e) => props.setStatus(e.target.value as "draft" | "active" | "allocated" | "finalized")}
-          className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
-        >
-          <option value="draft">Draft</option>
-          <option value="active">Active</option>
-          <option value="allocated">Allocated</option>
-          <option value="finalized">Finalized</option>
-        </select>
       </div>
 
       <div>
@@ -736,9 +677,9 @@ function AllocationsTab({
   const [running, setRunning] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const isFinalized = cycleStatus === "finalized";
+  const isDelivered = cycleStatus === "delivered";
+  const isAllocated = cycleStatus === "allocated";
   const hasOrderDate = !!cycleOrderDate;
-  const hasAllocations = rows.length > 0;
 
   const reload = async () => {
     const { data } = await supabase
@@ -793,6 +734,9 @@ function AllocationsTab({
         ];
         setMessage(`✅ ${data.message} — ${parts.join(", ")}`);
         await reload();
+        // Run also flips status to 'allocated' on the server. Tell the
+        // parent to refetch so its cycle list reflects the new status.
+        await onFinalized();
       }
     } catch (err) {
       setMessage(`Error: ${err instanceof Error ? err.message : "Unknown"}`);
@@ -804,7 +748,7 @@ function AllocationsTab({
   const finalizeCycle = async () => {
     if (
       !confirm(
-        "Mark this cycle as delivered? This will subtract the allocated qty from each factory_counts row and set the cycle's status to 'finalized'. The status gate prevents this from running twice, but the decrement itself is not undoable.",
+        "Mark this cycle as delivered? This will subtract the allocated qty from each factory_counts row and set the cycle's status to 'delivered'. The status gate prevents this from running twice, but the decrement itself is not undoable.",
       )
     ) {
       return;
@@ -821,9 +765,7 @@ function AllocationsTab({
       if (!response.ok) {
         setMessage(`Error: ${data.error}`);
       } else {
-        setMessage(
-          `✅ ${data.message} — ${data.decrements_applied} factory counts decremented`,
-        );
+        setMessage(`✅ ${data.message}`);
         await onFinalized();
       }
     } catch (err) {
@@ -860,29 +802,29 @@ function AllocationsTab({
         <div className="flex gap-2 shrink-0">
           <button
             onClick={runAllocations}
-            disabled={running || isFinalized}
+            disabled={running || isDelivered}
             className="px-4 py-2 bg-emerald-500 text-slate-950 rounded-full font-semibold disabled:opacity-50"
-            title={isFinalized ? "Cycle is finalized — re-running allocations would invalidate the delivery decrement" : undefined}
+            title={isDelivered ? "Cycle is delivered — re-running allocations would invalidate the delivery decrement" : undefined}
           >
             {running ? "Running..." : "Run allocations"}
           </button>
           <button
             onClick={finalizeCycle}
-            disabled={finalizing || isFinalized || !hasOrderDate || !hasAllocations}
+            disabled={finalizing || isDelivered || !isAllocated || !hasOrderDate}
             className="px-4 py-2 bg-amber-500 text-slate-950 rounded-full font-semibold disabled:opacity-50"
             title={
-              isFinalized
-                ? "Already finalized"
-                : !hasOrderDate
-                  ? "Set the cycle's order date on the Details tab before marking delivered"
-                  : !hasAllocations
-                    ? "Run allocations before marking delivered"
+              isDelivered
+                ? "Already delivered"
+                : !isAllocated
+                  ? "Run allocations first — Mark delivered is only available once the cycle is in 'allocated' status"
+                  : !hasOrderDate
+                    ? "Set the cycle's order date on the Details tab before marking delivered"
                     : undefined
             }
           >
             {finalizing
               ? "Marking..."
-              : isFinalized
+              : isDelivered
                 ? "Delivered ✓"
                 : "Mark delivered"}
           </button>
