@@ -49,7 +49,6 @@ export default function DeliveryOrders() {
   const [selectedCycleId, setSelectedCycleId] = useState("");
   const [loading, setLoading] = useState(false);
   const [supabaseReady, setSupabaseReady] = useState(true);
-  const [showPreview, setShowPreview] = useState(true);
 
   const isSignedIn = useMemo(() => !!session?.user, [session]);
   const isHQAdmin = useMemo(() => profile?.role === "hq_admin", [profile]);
@@ -151,63 +150,6 @@ export default function DeliveryOrders() {
     qty: number;
   };
 
-  type SubCategoryGroup = {
-    sub_category: string;
-    totalQty: number;
-    items: TotalOrderItem[];
-  };
-
-  type MetaCategoryGroup = {
-    meta_category: string;
-    totalQty: number;
-    sub_categories: SubCategoryGroup[];
-  };
-
-  const previewGroups: MetaCategoryGroup[] = [
-    {
-      meta_category: "Produce",
-      totalQty: 108,
-      sub_categories: [
-        {
-          sub_category: "Roots & Tubers",
-          totalQty: 56,
-          items: [
-            { item_id: "item-1", item_name: "Cassava", sku: "CAS-001", qty: 30 },
-            { item_id: "item-2", item_name: "Sweet Potato", sku: "SPT-002", qty: 26 },
-          ],
-        },
-        {
-          sub_category: "Greens",
-          totalQty: 52,
-          items: [
-            { item_id: "item-3", item_name: "Kale", sku: "KAL-003", qty: 28 },
-            { item_id: "item-4", item_name: "Spinach", sku: "SPN-004", qty: 24 },
-          ],
-        },
-      ],
-    },
-    {
-      meta_category: "Dairy",
-      totalQty: 45,
-      sub_categories: [
-        {
-          sub_category: "Milk",
-          totalQty: 25,
-          items: [
-            { item_id: "item-5", item_name: "Fresh Milk", sku: "MLK-005", qty: 25 },
-          ],
-        },
-        {
-          sub_category: "Cheese",
-          totalQty: 20,
-          items: [
-            { item_id: "item-6", item_name: "Processed Cheese", sku: "CHS-006", qty: 20 },
-          ],
-        },
-      ],
-    },
-  ];
-
   const totalOrders = useMemo(() => {
     const cycleAllocations = allocations.filter((a) => a.cycle_id === selectedCycleId);
     const metaGroups: Record<string, Record<string, { totalQty: number; items: Record<string, TotalOrderItem> }>> = {};
@@ -294,60 +236,6 @@ export default function DeliveryOrders() {
       <p className="mt-3 text-slate-400">
         Total orders summed across all stores, and per-store breakdowns for delivery.
       </p>
-
-      {isSignedIn && isHQAdmin && (
-        <div className="mt-6 rounded-3xl border border-white/10 bg-slate-900/80 p-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-xl font-semibold text-white">Preview: grouped delivery summary</h2>
-              <p className="mt-1 text-sm text-slate-400">
-                Example layout showing meta-category and sub-category totals before the live delivery data.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowPreview((prev) => !prev)}
-              className="rounded-2xl border border-cyan-500/20 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-200 transition hover:bg-cyan-500/20"
-            >
-              {showPreview ? "Hide preview" : "Show preview"}
-            </button>
-          </div>
-
-          {showPreview && (
-            <div className="mt-6 space-y-4">
-              {previewGroups.map((metaGroup) => (
-                <div key={metaGroup.meta_category} className="space-y-4 rounded-2xl bg-slate-950/80 p-4">
-                  <div className="border-b border-slate-800 pb-3">
-                    <h3 className="text-lg font-semibold text-white">{metaGroup.meta_category}</h3>
-                    <p className="text-sm text-slate-400">Total: {metaGroup.totalQty}</p>
-                  </div>
-                  <div className="space-y-4">
-                    {metaGroup.sub_categories.map((subGroup) => (
-                      <div key={subGroup.sub_category} className="rounded-2xl bg-slate-900/80 p-4">
-                        <div className="flex items-center justify-between gap-4 border-b border-slate-800 pb-3">
-                          <h4 className="text-sm font-semibold text-cyan-300">{subGroup.sub_category}</h4>
-                          <p className="text-sm text-slate-400">{subGroup.totalQty}</p>
-                        </div>
-                        <div className="mt-3 space-y-2">
-                          {subGroup.items.map((item) => (
-                            <div key={item.item_id} className="flex items-center justify-between gap-4">
-                              <div>
-                                <p className="text-sm text-slate-300">{item.item_name}</p>
-                                <p className="text-xs text-slate-500">{item.sku}</p>
-                              </div>
-                              <p className="text-sm font-semibold text-white">{item.qty}</p>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       {!supabaseReady ? (
         <div className="mt-8 rounded-2xl bg-rose-950/80 p-6 text-rose-200">
