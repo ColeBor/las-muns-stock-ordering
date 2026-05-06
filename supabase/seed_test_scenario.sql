@@ -48,10 +48,10 @@ values ('TEST: Acme Foods', 'test-seed@example.com');
 -- ============================================================================
 -- 2. Stores
 -- ============================================================================
-insert into public.stores (name, is_high_volume, location)
+insert into public.stores (name, tier, location)
 values
-  ('TEST: Store A', true,  'Test City A'),
-  ('TEST: Store B', false, 'Test City B')
+  ('TEST: Store A', 1, 'Test City A'),
+  ('TEST: Store B', 2, 'Test City B')
 on conflict (name) do nothing;
 
 -- ============================================================================

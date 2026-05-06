@@ -31,7 +31,7 @@ const formatCycleName = (cycle: { order_date: string } | null | undefined) =>
 type Store = {
   id: string;
   name: string;
-  is_high_volume: boolean;
+  tier: number;
 };
 
 type TabKey = "details" | "stockEntries" | "factoryCounts" | "allocations" | "overrides";
@@ -108,7 +108,7 @@ export default function AdminCycles() {
     }
     const loadAll = async () => {
       const [storesRes] = await Promise.all([
-        supabase.from("stores").select("id, name, is_high_volume").order("name"),
+        supabase.from("stores").select("id, name, tier").order("name"),
         reloadCycles(),
       ]);
       if (storesRes.data) setStores(storesRes.data as Store[]);
@@ -516,7 +516,7 @@ function CycleEditForm(props: {
                 className="mr-2 disabled:cursor-not-allowed"
               />
               <span className="text-sm text-slate-300">
-                {store.name} {store.is_high_volume ? "(HV)" : ""}
+                {store.name} <span className="text-xs text-slate-500">(Tier {store.tier})</span>
               </span>
             </label>
           ))}

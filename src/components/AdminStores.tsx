@@ -16,7 +16,7 @@ type Profile = {
 type Store = {
   id: string;
   name: string;
-  is_high_volume: boolean;
+  tier: number;
   location: string | null;
   created_at: string;
 };
@@ -30,7 +30,7 @@ export default function AdminStores() {
   const [showForm, setShowForm] = useState(false);
   const [editingStore, setEditingStore] = useState<Store | null>(null);
   const [name, setName] = useState("");
-  const [isHighVolume, setIsHighVolume] = useState(false);
+  const [tier, setTier] = useState(3);
   const [location, setLocation] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -100,7 +100,7 @@ export default function AdminStores() {
 
     const payload = {
       name: name.trim(),
-      is_high_volume: isHighVolume,
+      tier,
       location: location.trim() || null,
     };
 
@@ -119,7 +119,7 @@ export default function AdminStores() {
     setShowForm(false);
     setEditingStore(null);
     setName("");
-    setIsHighVolume(false);
+    setTier(3);
     setLocation("");
     await reloadStores();
   };
@@ -127,7 +127,7 @@ export default function AdminStores() {
   const handleEdit = (store: Store) => {
     setEditingStore(store);
     setName(store.name);
-    setIsHighVolume(store.is_high_volume);
+    setTier(store.tier);
     setLocation(store.location || "");
     setShowForm(true);
   };
@@ -152,7 +152,7 @@ export default function AdminStores() {
 
   const columnDefs: ColDef<Store>[] = [
     { headerName: "Name", field: "name", sortable: true, filter: true, flex: 2, minWidth: 150 },
-    { headerName: "High Volume", field: "is_high_volume", sortable: true, filter: true, width: 110 },
+    { headerName: "Tier", field: "tier", sortable: true, filter: true, width: 100 },
     { headerName: "Location", field: "location", sortable: true, filter: true, flex: 2, minWidth: 130 },
     {
       headerName: "Actions",
@@ -199,7 +199,7 @@ export default function AdminStores() {
               onClick={() => {
                 setEditingStore(null);
                 setName("");
-                setIsHighVolume(false);
+                setTier(3);
                 setLocation("");
                 setShowForm(true);
                 setSelectedStoreId(null);
@@ -224,11 +224,11 @@ export default function AdminStores() {
             <StoreEditForm
               editing={editingStore}
               name={name}
-              isHighVolume={isHighVolume}
+              tier={tier}
               location={location}
               loading={loading}
               setName={setName}
-              setIsHighVolume={setIsHighVolume}
+              setTier={setTier}
               setLocation={setLocation}
               onSubmit={handleSubmit}
               onCancel={() => setShowForm(false)}
@@ -272,11 +272,11 @@ export default function AdminStores() {
                 <StoreEditForm
                   editing={editingStore}
                   name={name}
-                  isHighVolume={isHighVolume}
+                  tier={tier}
                   location={location}
                   loading={loading}
                   setName={setName}
-                  setIsHighVolume={setIsHighVolume}
+                  setTier={setTier}
                   setLocation={setLocation}
                   onSubmit={handleSubmit}
                   onCancel={() => setSelectedStoreId(null)}
@@ -295,11 +295,11 @@ export default function AdminStores() {
 function StoreEditForm(props: {
   editing: Store | null;
   name: string;
-  isHighVolume: boolean;
+  tier: number;
   location: string;
   loading: boolean;
   setName: (v: string) => void;
-  setIsHighVolume: (v: boolean) => void;
+  setTier: (v: number) => void;
   setLocation: (v: string) => void;
   onSubmit: (e: FormEvent<HTMLFormElement>) => void;
   onCancel: () => void;
@@ -322,15 +322,18 @@ function StoreEditForm(props: {
       </div>
 
       <div>
-        <label className="flex items-center">
-          <input
-            type="checkbox"
-            checked={props.isHighVolume}
-            onChange={(e) => props.setIsHighVolume(e.target.checked)}
-            className="mr-2"
-          />
-          <span className="text-sm font-medium text-slate-300">High Volume Store</span>
+        <label className="block text-sm font-medium text-slate-300">
+          Tier <span className="text-xs text-slate-500">(1 = highest priority for stock)</span>
         </label>
+        <input
+          type="number"
+          min={1}
+          value={props.tier}
+          onChange={(e) =>
+            props.setTier(Math.max(1, parseInt(e.target.value, 10) || 1))
+          }
+          className="mt-1 rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400 w-32"
+        />
       </div>
 
       <div>

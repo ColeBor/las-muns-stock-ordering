@@ -127,6 +127,7 @@ export async function POST(request: NextRequest) {
     overrideRes,
     itemsRes,
     cycleStoresRes,
+    storesRes,
   ] = await Promise.all([
     supabaseAdmin
       .from("stock_entries")
@@ -151,9 +152,18 @@ export async function POST(request: NextRequest) {
       .from("cycle_stores")
       .select("store_id")
       .eq("cycle_id", cycle_id),
+    supabaseAdmin.from("stores").select("id,tier"),
   ]);
 
-  for (const res of [stockRes, factoryRes, storeFactoryRes, overrideRes, itemsRes, cycleStoresRes]) {
+  for (const res of [
+    stockRes,
+    factoryRes,
+    storeFactoryRes,
+    overrideRes,
+    itemsRes,
+    cycleStoresRes,
+    storesRes,
+  ]) {
     if (res.error) {
       return NextResponse.json({ error: res.error.message }, { status: 500 });
     }
@@ -165,6 +175,9 @@ export async function POST(request: NextRequest) {
   const overrides = (overrideRes.data ?? []) as Override[];
   const items = (itemsRes.data ?? []) as Item[];
   const cycleStores = (cycleStoresRes.data ?? []) as CycleStore[];
+  const stores = (storesRes.data ?? []) as Array<{ id: string; tier: number }>;
+  const tierByStore = new Map(stores.map((s) => [s.id, s.tier]));
+  const tierOf = (storeId: string) => tierByStore.get(storeId) ?? 999;
 
   // cycle_stores is the membership set: only stores listed there participate.
   // Empty cycle_stores means nobody is in the cycle — no allocations get
@@ -293,35 +306,83 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Priority-fair manufactured allocation. Walk priority levels outermost so
-  // every priority-1 claim resolves before any priority-2 fallback. This
-  // prevents a store from sweeping a factory via secondary preference while
-  // another store with priority-1 on the same factory is still unmet.
+  // Manufactured allocation runs in two phases:
+  //
+  //   Phase 1 (floor of 1): every demanding store gets 1 unit of each
+  //   manufactured item it wants, walking stores in tier order so the
+  //   highest-priority stores get the floor first if stock is tight.
+  //
+  //   Phase 2 (tier-fair priority-fair distribution): the remaining stock
+  //   is distributed by tier (asc) outermost, then by store_factories
+  //   priority within each tier. Lower tier number = higher priority for
+  //   stock; same-tier stores are equal-priority. Within a tier we still
+  //   honor the existing priority-fair rule (a store at a factory's
+  //   priority-1 gets it before a different store using the same factory
+  //   as priority-2 fallback).
   const maxPriority = storeFactories.reduce(
     (m, sf) => (sf.priority > m ? sf.priority : m),
     0,
   );
-  for (let p = 1; p <= maxPriority; p++) {
-    for (const sf of storeFactories) {
-      if (sf.priority !== p) continue;
-      for (const state of manufacturedStates.values()) {
-        if (state.store_id !== sf.store_id) continue;
-        const remaining = state.needed - state.fulfilled;
-        if (remaining <= 0) continue;
-        const k = availableKey(sf.factory_id, state.item_id);
-        const avail = availableMap.get(k) ?? 0;
-        if (avail <= 0) continue;
-        const take = Math.min(remaining, avail);
-        availableMap.set(k, avail - take);
-        if (state.primaryFactoryId === null) state.primaryFactoryId = sf.factory_id;
-        state.fulfilled += take;
-        factorySplits.push({
-          cycle_id: cycle_id!,
-          store_id: state.store_id,
-          item_id: state.item_id,
-          factory_id: sf.factory_id,
-          qty: take,
-        });
+
+  type ManufacturedState = (typeof manufacturedStates) extends Map<
+    string,
+    infer V
+  >
+    ? V
+    : never;
+  const allocateOne = (state: ManufacturedState, sf: StoreFactory, want: number) => {
+    if (want <= 0) return 0;
+    const k = availableKey(sf.factory_id, state.item_id);
+    const avail = availableMap.get(k) ?? 0;
+    if (avail <= 0) return 0;
+    const take = Math.min(want, avail);
+    availableMap.set(k, avail - take);
+    if (state.primaryFactoryId === null) state.primaryFactoryId = sf.factory_id;
+    state.fulfilled += take;
+    factorySplits.push({
+      cycle_id: cycle_id!,
+      store_id: state.store_id,
+      item_id: state.item_id,
+      factory_id: sf.factory_id,
+      qty: take,
+    });
+    return take;
+  };
+
+  // Phase 1: floor of 1 per store, walking demanding stores in tier order.
+  // Each iteration tries the store's full factory-priority chain until we
+  // either get one unit or exhaust the chain.
+  const stateList = [...manufacturedStates.values()];
+  const sortedByTier = [...stateList].sort(
+    (a, b) => tierOf(a.store_id) - tierOf(b.store_id),
+  );
+  for (const state of sortedByTier) {
+    if (state.needed < 1 || state.fulfilled >= 1) continue;
+    let got = 0;
+    for (let p = 1; p <= maxPriority && got < 1; p++) {
+      for (const sf of storeFactories) {
+        if (got >= 1) break;
+        if (sf.store_id !== state.store_id || sf.priority !== p) continue;
+        got += allocateOne(state, sf, 1 - got);
+      }
+    }
+  }
+
+  // Phase 2: tier-fair priority-fair distribution for the remaining demand.
+  const tiers = Array.from(
+    new Set(stateList.map((s) => tierOf(s.store_id))),
+  ).sort((a, b) => a - b);
+  for (const tier of tiers) {
+    for (let p = 1; p <= maxPriority; p++) {
+      for (const sf of storeFactories) {
+        if (sf.priority !== p) continue;
+        if (tierOf(sf.store_id) !== tier) continue;
+        for (const state of manufacturedStates.values()) {
+          if (state.store_id !== sf.store_id) continue;
+          const remaining = state.needed - state.fulfilled;
+          if (remaining <= 0) continue;
+          allocateOne(state, sf, remaining);
+        }
       }
     }
   }
@@ -347,11 +408,26 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Per-factory split rows depend on allocations existing (FK), so insert second.
-  if (factorySplits.length > 0) {
+  // Per-factory split rows depend on allocations existing (FK), so insert
+  // second. The two-phase allocator (floor + distribution) can push more
+  // than one push for the same (store, factory, item) — aggregate before
+  // insert so we don't trip the (cycle_id, store_id, item_id, factory_id)
+  // primary key.
+  const splitsByKey = new Map<string, FactorySplit>();
+  for (const s of factorySplits) {
+    const k = `${s.store_id}|${s.item_id}|${s.factory_id}`;
+    const existing = splitsByKey.get(k);
+    if (existing) {
+      existing.qty += s.qty;
+    } else {
+      splitsByKey.set(k, { ...s });
+    }
+  }
+  const aggregatedSplits = [...splitsByKey.values()];
+  if (aggregatedSplits.length > 0) {
     const { error: splitError } = await supabaseAdmin
       .from("allocation_factories")
-      .insert(factorySplits);
+      .insert(aggregatedSplits);
     if (splitError) {
       return NextResponse.json({ error: splitError.message }, { status: 500 });
     }
@@ -412,7 +488,7 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     message: "Allocations completed",
     allocations_created: allocationRows.length,
-    factory_splits_created: factorySplits.length,
+    factory_splits_created: aggregatedSplits.length,
     purchase_orders_created: purchaseOrdersCreated,
     shortfalls,
     cycle_id,

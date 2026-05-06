@@ -62,7 +62,7 @@ Sales data is pulled from a POS system (API or weekly CSV export) and used in sh
 
 ```
 stores
-  id, name, is_high_volume, location, created_at
+  id, name, tier, location, created_at
 
 factories
   id, name, location, created_at
