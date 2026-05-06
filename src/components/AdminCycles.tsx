@@ -545,7 +545,6 @@ type StockEntryRow = {
   item_name: string;
   current_count: number;
   entered_at: string;
-  entered_by: string | null;
 };
 
 function StockEntriesTab({ cycleId }: { cycleId: string }) {
@@ -555,7 +554,7 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
       const { data } = await supabase
         .from("stock_entries")
         .select(
-          "current_count,entered_at,entered_by,stores(name),items(name)",
+          "current_count,entered_at,stores(name),items(name)",
         )
         .eq("cycle_id", cycleId)
         .order("entered_at", { ascending: false });
@@ -564,7 +563,6 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
           (data as unknown as Array<{
             current_count: number;
             entered_at: string;
-            entered_by: string | null;
             stores: { name: string } | null;
             items: { name: string } | null;
           }>).map((e) => ({
@@ -572,7 +570,6 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
             item_name: e.items?.name ?? "",
             current_count: e.current_count,
             entered_at: e.entered_at,
-            entered_by: e.entered_by,
           })),
         );
       }
@@ -589,10 +586,10 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
       field: "entered_at",
       sortable: true,
       filter: true,
-      width: 160,
+      flex: 1,
+      minWidth: 160,
       valueFormatter: (p) => (p.value ? new Date(p.value).toLocaleString() : ""),
     },
-    { headerName: "By", field: "entered_by", sortable: true, filter: true, flex: 1, minWidth: 130 },
   ];
 
   return (
@@ -616,7 +613,6 @@ type FactoryCountRow = {
   item_name: string;
   available_qty: number;
   counted_at: string;
-  counted_by: string | null;
 };
 
 function FactoryCountsTab({ cycleId }: { cycleId: string }) {
@@ -626,7 +622,7 @@ function FactoryCountsTab({ cycleId }: { cycleId: string }) {
       const { data } = await supabase
         .from("factory_counts")
         .select(
-          "available_qty,counted_at,counted_by,factories(name),items(name)",
+          "available_qty,counted_at,factories(name),items(name)",
         )
         .eq("cycle_id", cycleId)
         .order("counted_at", { ascending: false });
@@ -635,7 +631,6 @@ function FactoryCountsTab({ cycleId }: { cycleId: string }) {
           (data as unknown as Array<{
             available_qty: number;
             counted_at: string;
-            counted_by: string | null;
             factories: { name: string } | null;
             items: { name: string } | null;
           }>).map((e) => ({
@@ -643,7 +638,6 @@ function FactoryCountsTab({ cycleId }: { cycleId: string }) {
             item_name: e.items?.name ?? "",
             available_qty: e.available_qty,
             counted_at: e.counted_at,
-            counted_by: e.counted_by,
           })),
         );
       }
@@ -660,10 +654,10 @@ function FactoryCountsTab({ cycleId }: { cycleId: string }) {
       field: "counted_at",
       sortable: true,
       filter: true,
-      width: 160,
+      flex: 1,
+      minWidth: 160,
       valueFormatter: (p) => (p.value ? new Date(p.value).toLocaleString() : ""),
     },
-    { headerName: "By", field: "counted_by", sortable: true, filter: true, flex: 1, minWidth: 130 },
   ];
 
   return (
