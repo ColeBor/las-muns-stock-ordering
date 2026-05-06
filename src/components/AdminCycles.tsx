@@ -697,6 +697,7 @@ function FactoryCountsTab({ cycleId }: { cycleId: string }) {
 type AllocationRow = {
   store_name: string;
   item_name: string;
+  sub_category: string | null;
   qty: number;
   source: string;
   factory_name: string;
@@ -726,7 +727,7 @@ function AllocationsTab({
     const { data } = await supabase
       .from("allocations")
       .select(
-        "qty,source,shortfall,stores(name),items(name),factories!allocations_factory_id_fkey(name)",
+        "qty,source,shortfall,stores(name),items(name,sub_category),factories!allocations_factory_id_fkey(name)",
       )
       .eq("cycle_id", cycleId);
     if (data) {
@@ -736,11 +737,12 @@ function AllocationsTab({
           source: string;
           shortfall: number;
           stores: { name: string } | null;
-          items: { name: string } | null;
+          items: { name: string; sub_category: string | null } | null;
           factories: { name: string } | null;
         }>).map((a) => ({
           store_name: a.stores?.name ?? "",
           item_name: a.items?.name ?? "",
+          sub_category: a.items?.sub_category ?? null,
           qty: a.qty,
           source: a.source,
           factory_name: a.factories?.name ?? "",
@@ -817,10 +819,41 @@ function AllocationsTab({
   };
 
   const columnDefs: ColDef<AllocationRow>[] = [
-    { headerName: "Store", field: "store_name", sortable: true, filter: true, width: 150 },
+    {
+      headerName: "Store",
+      field: "store_name",
+      sortable: true,
+      filter: true,
+      width: 150,
+      sort: "asc",
+      sortIndex: 0,
+    },
+    {
+      headerName: "Source",
+      field: "source",
+      sortable: true,
+      filter: true,
+      width: 120,
+      sort: "asc",
+      sortIndex: 1,
+      valueFormatter: (p) => {
+        const v = (p.value as string | undefined) ?? "";
+        if (!v) return "";
+        const spaced = v.replace(/_/g, " ");
+        return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+      },
+    },
+    {
+      headerName: "Category",
+      field: "sub_category",
+      sortable: true,
+      filter: true,
+      width: 140,
+      sort: "asc",
+      sortIndex: 2,
+    },
     { headerName: "Item", field: "item_name", sortable: true, filter: true, flex: 2, minWidth: 150 },
     { headerName: "Qty", field: "qty", sortable: true, filter: true, width: 90 },
-    { headerName: "Source", field: "source", sortable: true, filter: true, width: 120 },
     { headerName: "Factory", field: "factory_name", sortable: true, filter: true, width: 150 },
     {
       headerName: "Shortfall",
