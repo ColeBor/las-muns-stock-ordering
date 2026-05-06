@@ -268,11 +268,7 @@ export default function AdminCycles() {
       headerName: "Actions",
       width: 180,
       cellRenderer: (params: ICellRendererParams<OrderCycle>) => (
-        <div
-          className={`flex h-full items-center gap-2 ${
-            params.data!.status === "delivered" ? "justify-center" : ""
-          }`}
-        >
+        <div className="flex h-full items-center justify-center gap-2">
           <button
             onClick={() => openManagePanel(params.data!)}
             className="px-2 py-1 text-xs bg-cyan-500 text-slate-950 rounded font-semibold"
