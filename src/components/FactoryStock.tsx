@@ -150,40 +150,34 @@ export default function FactoryStock() {
     }
 
     const loadFactoryData = async () => {
-      // In master view, drop the factory_id filter so we get rows across
-      // every factory for aggregation.
-      const countsQuery = supabase
-        .from("factory_counts")
-        .select(
-          "cycle_id,factory_id,item_id,available_qty,counted_at,items(name,type,sub_category)",
-        )
-        .order("counted_at", { ascending: false });
-      const allocationsQuery = supabase
-        .from("allocation_factories")
-        .select("cycle_id,store_id,item_id,qty,factory_id")
-        .order("cycle_id");
-      if (!isMasterView) {
-        countsQuery.eq("factory_id", effectiveFactoryId);
-        allocationsQuery.eq("factory_id", effectiveFactoryId);
-      }
-
-      const [cycleResponse, countsResponse, allocationsResponse, factoryResponse] =
-        await Promise.all([
-          supabase
-            .from("order_cycles")
-            .select("id,name,status")
-            .order("created_at", { ascending: false })
-            .limit(5),
-          countsQuery,
-          allocationsQuery,
-          isMasterView
-            ? Promise.resolve({ data: null })
-            : supabase
-                .from("factories")
-                .select("id,name")
-                .eq("id", effectiveFactoryId)
-                .single(),
-        ]);
+      // Cycle dropdown: every active cycle plus at most the 2 most recent
+      // delivered ones, same as /store-stock-entry — factory workers don't
+      // need a long history surfaced in the picker. Counts and allocations
+      // load lazily once the cycle is selected (separate effect below).
+      const [
+        activeCyclesResponse,
+        deliveredCyclesResponse,
+        factoryResponse,
+      ] = await Promise.all([
+        supabase
+          .from("order_cycles")
+          .select("id,name,status")
+          .neq("status", "delivered")
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("order_cycles")
+          .select("id,name,status")
+          .eq("status", "delivered")
+          .order("created_at", { ascending: false })
+          .limit(2),
+        isMasterView
+          ? Promise.resolve({ data: null })
+          : supabase
+              .from("factories")
+              .select("id,name")
+              .eq("id", effectiveFactoryId)
+              .single(),
+      ]);
 
       if (isMasterView) {
         setFactory({ id: MASTER_FACTORY, name: "Master view (all factories)" });
@@ -191,21 +185,52 @@ export default function FactoryStock() {
         setFactory(factoryResponse.data as Factory);
       }
 
-      if (cycleResponse.data) {
-        setCycles(cycleResponse.data as OrderCycle[]);
-      }
-
-      if (countsResponse.data) {
-        setCounts(countsResponse.data as unknown as FactoryCount[]);
-      }
-
-      if (allocationsResponse.data) {
-        setAllocations(allocationsResponse.data as AllocationFactory[]);
-      }
+      const cycleList = [
+        ...((activeCyclesResponse.data as OrderCycle[]) ?? []),
+        ...((deliveredCyclesResponse.data as OrderCycle[]) ?? []),
+      ];
+      setCycles(cycleList);
     };
 
     loadFactoryData();
   }, [canManage, effectiveFactoryId, isMasterView]);
+
+  // Lazy-fetch factory_counts and allocation_factories scoped to the
+  // selected cycle (and factory, unless in master view).
+  useEffect(() => {
+    if (!canManage || !effectiveFactoryId || !selectedCycleId) {
+      setCounts([]);
+      setAllocations([]);
+      return;
+    }
+    const loadCycleScoped = async () => {
+      const countsQuery = supabase
+        .from("factory_counts")
+        .select(
+          "cycle_id,factory_id,item_id,available_qty,counted_at,items(name,type,sub_category)",
+        )
+        .eq("cycle_id", selectedCycleId);
+      const allocationsQuery = supabase
+        .from("allocation_factories")
+        .select("cycle_id,store_id,item_id,qty,factory_id")
+        .eq("cycle_id", selectedCycleId);
+      if (!isMasterView) {
+        countsQuery.eq("factory_id", effectiveFactoryId);
+        allocationsQuery.eq("factory_id", effectiveFactoryId);
+      }
+      const [countsResponse, allocationsResponse] = await Promise.all([
+        countsQuery,
+        allocationsQuery,
+      ]);
+      if (countsResponse.data) {
+        setCounts(countsResponse.data as unknown as FactoryCount[]);
+      }
+      if (allocationsResponse.data) {
+        setAllocations(allocationsResponse.data as AllocationFactory[]);
+      }
+    };
+    loadCycleScoped();
+  }, [canManage, effectiveFactoryId, isMasterView, selectedCycleId]);
 
   useEffect(() => {
     if (cycles.length > 0 && !selectedCycleId) {

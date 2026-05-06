@@ -186,40 +186,72 @@ export default function StoreStockEntry() {
     }
 
     const loadStoreData = async () => {
-      const [storeResponse, cycleResponse, itemsResponse, entriesResponse] = await Promise.all([
+      // Cycle dropdown shows every active cycle plus at most the 2 most
+      // recent delivered ones — store employees don't need a long history,
+      // but a couple of recent finished orders are useful for reference.
+      // stock_entries is fetched lazily once the cycle is selected (see
+      // separate effect below) so we don't pull every entry across every
+      // cycle for the store.
+      const [
+        storeResponse,
+        activeCyclesResponse,
+        deliveredCyclesResponse,
+        itemsResponse,
+      ] = await Promise.all([
         supabase.from("stores").select("id,name").eq("id", effectiveStoreId).single(),
-        supabase.from("order_cycles").select("id,name,status,order_date").order("created_at", { ascending: false }).limit(5),
+        supabase
+          .from("order_cycles")
+          .select("id,name,status,order_date")
+          .neq("status", "delivered")
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("order_cycles")
+          .select("id,name,status,order_date")
+          .eq("status", "delivered")
+          .order("created_at", { ascending: false })
+          .limit(2),
         supabase
           .from("store_items")
           .select("item_id,is_active,capacity,items(name,sub_category,packaging_type)")
           .eq("store_id", effectiveStoreId)
           .order("item_id"),
-        supabase
-          .from("stock_entries")
-          .select("cycle_id,store_id,item_id,current_count,entered_at,items(name)")
-          .eq("store_id", effectiveStoreId)
-          .order("entered_at", { ascending: false }),
       ]);
 
       if (storeResponse.data) {
         setStore(storeResponse.data as Store);
       }
 
-      if (cycleResponse.data) {
-        setCycles(cycleResponse.data as OrderCycle[]);
-      }
+      const cycleList = [
+        ...((activeCyclesResponse.data as OrderCycle[]) ?? []),
+        ...((deliveredCyclesResponse.data as OrderCycle[]) ?? []),
+      ];
+      setCycles(cycleList);
 
       if (itemsResponse.data) {
         setStoreItems(itemsResponse.data as unknown as StoreItem[]);
-      }
-
-      if (entriesResponse.data) {
-        setEntries(entriesResponse.data as unknown as StockEntry[]);
       }
     };
 
     loadStoreData();
   }, [canManage, effectiveStoreId]);
+
+  // Lazy-fetch stock entries scoped to (cycle, store) only — no embed,
+  // no cross-cycle data. Refetched whenever the selection changes.
+  useEffect(() => {
+    if (!selectedCycleId || !effectiveStoreId) {
+      setEntries([]);
+      return;
+    }
+    const loadEntries = async () => {
+      const { data } = await supabase
+        .from("stock_entries")
+        .select("cycle_id,store_id,item_id,current_count,entered_at")
+        .eq("cycle_id", selectedCycleId)
+        .eq("store_id", effectiveStoreId);
+      if (data) setEntries(data as StockEntry[]);
+    };
+    loadEntries();
+  }, [selectedCycleId, effectiveStoreId]);
 
   useEffect(() => {
     if (cycles.length > 0 && !selectedCycleId) {
