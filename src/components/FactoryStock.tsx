@@ -335,15 +335,15 @@ export default function FactoryStock() {
   };
 
   const columnDefs: ColDef<FactoryCountRow>[] = [
-    { headerName: "Category", field: "sub_category", sortable: true, filter: true, width: 140 },
-    { headerName: "Item Name", field: "item_name", sortable: true, filter: true, width: 200 },
-    { headerName: "Packaging", field: "packaging_type", sortable: true, filter: true, width: 120 },
+    { headerName: "Category", field: "sub_category", sortable: true, filter: true, width: 120 },
+    { headerName: "Item", field: "item_name", sortable: true, filter: true, flex: 2, minWidth: 150 },
+    { headerName: "Packaging", field: "packaging_type", sortable: true, filter: true, width: 130 },
     {
-      headerName: "Available Qty",
+      headerName: "Available",
       field: "available_qty",
       sortable: true,
       filter: true,
-      width: 130,
+      width: 110,
       editable: !isMasterView,
       cellEditor: "agNumberCellEditor",
       cellEditorParams: { min: 0 },
@@ -351,19 +351,19 @@ export default function FactoryStock() {
         backgroundColor: params.data?.has_existing_count ? '#1f2937' : '#374151',
       }),
     },
-    { headerName: "Allocatable", field: "allocatable_qty", sortable: true, filter: true, width: 120,
+    { headerName: "Allocatable", field: "allocatable_qty", sortable: true, filter: true, width: 130,
       cellStyle: () => ({
         backgroundColor: '#1e3a2f',
         color: '#10b981',
       }),
     },
-    { headerName: "Allocated", field: "total_allocated", sortable: true, filter: true, width: 100 },
+    { headerName: "Allocated", field: "total_allocated", sortable: true, filter: true, width: 115 },
     {
       headerName: "Remaining",
       field: "remaining_after_reserve",
       sortable: true,
       filter: true,
-      width: 100,
+      width: 115,
       cellStyle: (params) => ({
         color: params.value < 0 ? '#ef4444' : '#10b981',
         fontWeight: 'bold',
@@ -467,6 +467,7 @@ export default function FactoryStock() {
                 resizable: true,
                 sortable: true,
                 filter: true,
+                minWidth: 80,
               }}
               onCellValueChanged={handleCellValueChanged}
               stopEditingWhenCellsLoseFocus={true}

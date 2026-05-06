@@ -238,14 +238,14 @@ export default function AdminCycles() {
   }, [cycleParam, cycles, paramHandled]);
 
   const columnDefs: ColDef<OrderCycle>[] = [
-    { headerName: "Name", field: "name", sortable: true, filter: true },
-    { headerName: "Status", field: "status", sortable: true, filter: true, width: 120 },
+    { headerName: "Name", field: "name", sortable: true, filter: true, flex: 2, minWidth: 150 },
+    { headerName: "Status", field: "status", sortable: true, filter: true, width: 110 },
     {
       headerName: "Started",
       field: "started_at",
       sortable: true,
       filter: true,
-      width: 120,
+      width: 110,
       valueFormatter: (params) => new Date(params.value).toLocaleDateString(),
     },
     {
@@ -253,7 +253,7 @@ export default function AdminCycles() {
       field: "order_date",
       sortable: true,
       filter: true,
-      width: 130,
+      width: 125,
       valueFormatter: (params) =>
         params.value ? new Date(params.value).toLocaleDateString() : "",
     },
@@ -263,6 +263,8 @@ export default function AdminCycles() {
         params.data?.cycle_stores?.map((cs) => cs.stores.name).join(", ") || "",
       sortable: false,
       filter: false,
+      flex: 2,
+      minWidth: 150,
     },
     {
       headerName: "Actions",
@@ -353,7 +355,7 @@ export default function AdminCycles() {
             <AgGridReact
               rowData={cycles}
               columnDefs={columnDefs}
-              defaultColDef={{ resizable: true, sortable: true, filter: true }}
+              defaultColDef={{ resizable: true, sortable: true, filter: true, minWidth: 80 }}
             />
           </div>
 
@@ -597,18 +599,18 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
   }, [cycleId]);
 
   const columnDefs: ColDef<StockEntryRow>[] = [
-    { headerName: "Store", field: "store_name", sortable: true, filter: true, width: 180 },
-    { headerName: "Item", field: "item_name", sortable: true, filter: true, width: 220 },
-    { headerName: "Count", field: "current_count", sortable: true, filter: true, width: 110 },
+    { headerName: "Store", field: "store_name", sortable: true, filter: true, width: 150 },
+    { headerName: "Item", field: "item_name", sortable: true, filter: true, flex: 2, minWidth: 150 },
+    { headerName: "Count", field: "current_count", sortable: true, filter: true, width: 100 },
     {
       headerName: "Entered",
       field: "entered_at",
       sortable: true,
       filter: true,
-      width: 180,
+      width: 160,
       valueFormatter: (p) => (p.value ? new Date(p.value).toLocaleString() : ""),
     },
-    { headerName: "By", field: "entered_by", sortable: true, filter: true, width: 200 },
+    { headerName: "By", field: "entered_by", sortable: true, filter: true, flex: 1, minWidth: 130 },
   ];
 
   return (
@@ -620,7 +622,7 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
         <AgGridReact
           rowData={rows}
           columnDefs={columnDefs}
-          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          defaultColDef={{ resizable: true, sortable: true, filter: true, minWidth: 80 }}
         />
       </div>
     </div>
@@ -668,18 +670,18 @@ function FactoryCountsTab({ cycleId }: { cycleId: string }) {
   }, [cycleId]);
 
   const columnDefs: ColDef<FactoryCountRow>[] = [
-    { headerName: "Factory", field: "factory_name", sortable: true, filter: true, width: 180 },
-    { headerName: "Item", field: "item_name", sortable: true, filter: true, width: 220 },
-    { headerName: "Available", field: "available_qty", sortable: true, filter: true, width: 130 },
+    { headerName: "Factory", field: "factory_name", sortable: true, filter: true, width: 150 },
+    { headerName: "Item", field: "item_name", sortable: true, filter: true, flex: 2, minWidth: 150 },
+    { headerName: "Available", field: "available_qty", sortable: true, filter: true, width: 110 },
     {
       headerName: "Counted",
       field: "counted_at",
       sortable: true,
       filter: true,
-      width: 180,
+      width: 160,
       valueFormatter: (p) => (p.value ? new Date(p.value).toLocaleString() : ""),
     },
-    { headerName: "By", field: "counted_by", sortable: true, filter: true, width: 200 },
+    { headerName: "By", field: "counted_by", sortable: true, filter: true, flex: 1, minWidth: 130 },
   ];
 
   return (
@@ -691,7 +693,7 @@ function FactoryCountsTab({ cycleId }: { cycleId: string }) {
         <AgGridReact
           rowData={rows}
           columnDefs={columnDefs}
-          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          defaultColDef={{ resizable: true, sortable: true, filter: true, minWidth: 80 }}
         />
       </div>
     </div>
@@ -820,17 +822,17 @@ function AllocationsTab({
   };
 
   const columnDefs: ColDef<AllocationRow>[] = [
-    { headerName: "Store", field: "store_name", sortable: true, filter: true, width: 180 },
-    { headerName: "Item", field: "item_name", sortable: true, filter: true, width: 200 },
+    { headerName: "Store", field: "store_name", sortable: true, filter: true, width: 150 },
+    { headerName: "Item", field: "item_name", sortable: true, filter: true, flex: 2, minWidth: 150 },
     { headerName: "Qty", field: "qty", sortable: true, filter: true, width: 90 },
-    { headerName: "Source", field: "source", sortable: true, filter: true, width: 130 },
-    { headerName: "Factory", field: "factory_name", sortable: true, filter: true, width: 180 },
+    { headerName: "Source", field: "source", sortable: true, filter: true, width: 120 },
+    { headerName: "Factory", field: "factory_name", sortable: true, filter: true, width: 150 },
     {
       headerName: "Shortfall",
       field: "shortfall",
       sortable: true,
       filter: true,
-      width: 110,
+      width: 115,
       cellStyle: (p) => ({ color: (p.value ?? 0) > 0 ? "#ef4444" : "#10b981" }),
     },
   ];
@@ -887,7 +889,7 @@ function AllocationsTab({
         <AgGridReact
           rowData={rows}
           columnDefs={columnDefs}
-          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          defaultColDef={{ resizable: true, sortable: true, filter: true, minWidth: 80 }}
         />
       </div>
     </div>
@@ -1019,11 +1021,11 @@ function OverridesTab({ cycleId }: { cycleId: string }) {
   };
 
   const columnDefs: ColDef<OverrideRow>[] = [
-    { headerName: "Store", field: "store_name", sortable: true, filter: true, width: 180 },
-    { headerName: "Item", field: "item_name", sortable: true, filter: true, width: 200 },
-    { headerName: "Qty", field: "qty", sortable: true, filter: true, width: 100 },
-    { headerName: "Reason", field: "reason", sortable: true, filter: true, flex: 1 },
-    { headerName: "Set by", field: "set_by", sortable: true, filter: true, width: 200 },
+    { headerName: "Store", field: "store_name", sortable: true, filter: true, width: 150 },
+    { headerName: "Item", field: "item_name", sortable: true, filter: true, flex: 2, minWidth: 150 },
+    { headerName: "Qty", field: "qty", sortable: true, filter: true, width: 90 },
+    { headerName: "Reason", field: "reason", sortable: true, filter: true, flex: 1, minWidth: 120 },
+    { headerName: "Set by", field: "set_by", sortable: true, filter: true, flex: 1, minWidth: 130 },
     {
       headerName: "Actions",
       width: 160,
@@ -1150,7 +1152,7 @@ function OverridesTab({ cycleId }: { cycleId: string }) {
         <AgGridReact
           rowData={rows}
           columnDefs={columnDefs}
-          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          defaultColDef={{ resizable: true, sortable: true, filter: true, minWidth: 80 }}
         />
       </div>
     </div>

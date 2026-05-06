@@ -172,10 +172,11 @@ export default function AdminSuppliers() {
   };
 
   const columnDefs: ColDef<Supplier>[] = [
-    { headerName: "Name", field: "name", sortable: true, filter: true },
-    { headerName: "Contact Info", field: "contact_info", sortable: true, filter: true },
+    { headerName: "Name", field: "name", sortable: true, filter: true, flex: 2, minWidth: 150 },
+    { headerName: "Contact Info", field: "contact_info", sortable: true, filter: true, flex: 2, minWidth: 130 },
     {
       headerName: "Actions",
+      width: 160,
       cellRenderer: (params: any) => (
         <div className="flex gap-2">
           <button
@@ -289,6 +290,7 @@ export default function AdminSuppliers() {
                 resizable: true,
                 sortable: true,
                 filter: true,
+                minWidth: 80,
               }}
             />
           </div>

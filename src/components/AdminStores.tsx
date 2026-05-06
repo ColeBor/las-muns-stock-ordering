@@ -151,12 +151,12 @@ export default function AdminStores() {
   };
 
   const columnDefs: ColDef<Store>[] = [
-    { headerName: "Name", field: "name", sortable: true, filter: true },
-    { headerName: "High Volume", field: "is_high_volume", sortable: true, filter: true, width: 130 },
-    { headerName: "Location", field: "location", sortable: true, filter: true },
+    { headerName: "Name", field: "name", sortable: true, filter: true, flex: 2, minWidth: 150 },
+    { headerName: "High Volume", field: "is_high_volume", sortable: true, filter: true, width: 110 },
+    { headerName: "Location", field: "location", sortable: true, filter: true, flex: 2, minWidth: 130 },
     {
       headerName: "Actions",
-      width: 280,
+      width: 200,
       cellRenderer: (params: ICellRendererParams<Store>) => (
         <div className="flex gap-2">
           <button
@@ -216,7 +216,7 @@ export default function AdminStores() {
             <AgGridReact
               rowData={stores}
               columnDefs={columnDefs}
-              defaultColDef={{ resizable: true, sortable: true, filter: true }}
+              defaultColDef={{ resizable: true, sortable: true, filter: true, minWidth: 80 }}
             />
           </div>
 
@@ -469,12 +469,12 @@ function StoreItemsTab({ storeId }: { storeId: string }) {
   };
 
   const columnDefs: ColDef<StoreItemRow>[] = [
-    { headerName: "Name", field: "name", sortable: true, filter: true, width: 220 },
-    { headerName: "Type", field: "type", sortable: true, filter: true, width: 130 },
+    { headerName: "Name", field: "name", sortable: true, filter: true, flex: 2, minWidth: 150 },
+    { headerName: "Type", field: "type", sortable: true, filter: true, width: 110 },
     {
       headerName: "Active",
       field: "is_active",
-      width: 100,
+      width: 90,
       cellRenderer: (params: ICellRendererParams<StoreItemRow>) => (
         <input
           type="checkbox"
@@ -487,7 +487,7 @@ function StoreItemsTab({ storeId }: { storeId: string }) {
     {
       headerName: "Capacity",
       field: "capacity",
-      width: 130,
+      width: 110,
       editable: true,
       cellEditor: "agNumberCellEditor",
       cellEditorParams: { min: 0 },
@@ -518,7 +518,7 @@ function StoreItemsTab({ storeId }: { storeId: string }) {
         <AgGridReact
           rowData={rows}
           columnDefs={columnDefs}
-          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          defaultColDef={{ resizable: true, sortable: true, filter: true, minWidth: 80 }}
           pagination
           paginationPageSize={20}
         />
@@ -638,12 +638,12 @@ function StoreFactoriesTab({ storeId }: { storeId: string }) {
   };
 
   const columnDefs: ColDef<StoreFactoryRow>[] = [
-    { headerName: "Factory", field: "factory_name", sortable: true, filter: true, width: 200 },
-    { headerName: "Location", field: "location", sortable: true, filter: true, width: 200 },
+    { headerName: "Factory", field: "factory_name", sortable: true, filter: true, flex: 2, minWidth: 150 },
+    { headerName: "Location", field: "location", sortable: true, filter: true, flex: 2, minWidth: 130 },
     {
       headerName: "Priority",
       field: "priority",
-      width: 120,
+      width: 100,
       editable: true,
       cellEditor: "agNumberCellEditor",
       cellEditorParams: { min: 1 },
@@ -705,7 +705,7 @@ function StoreFactoriesTab({ storeId }: { storeId: string }) {
         <AgGridReact
           rowData={rows}
           columnDefs={columnDefs}
-          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          defaultColDef={{ resizable: true, sortable: true, filter: true, minWidth: 80 }}
         />
       </div>
     </div>

@@ -278,16 +278,16 @@ export default function StoreStockEntry() {
   };
 
   const columnDefs: ColDef<StockEntryRow>[] = [
-    { headerName: "Category", field: "sub_category", sortable: true, filter: true, width: 140 },
-    { headerName: "Item Name", field: "item_name", sortable: true, filter: true, width: 200 },
-    { headerName: "Packaging", field: "packaging_type", sortable: true, filter: true, width: 120 },
+    { headerName: "Category", field: "sub_category", sortable: true, filter: true, width: 120 },
+    { headerName: "Item", field: "item_name", sortable: true, filter: true, flex: 2, minWidth: 150 },
+    { headerName: "Packaging", field: "packaging_type", sortable: true, filter: true, width: 130 },
     { headerName: "Capacity", field: "capacity", sortable: true, filter: true, width: 100 },
     {
       headerName: "Current Count",
       field: "current_count",
       sortable: true,
       filter: true,
-      width: 130,
+      width: 145,
       editable: true,
       cellEditor: "agNumberCellEditor",
       cellEditorParams: { min: 0 },
@@ -396,6 +396,7 @@ export default function StoreStockEntry() {
                 resizable: true,
                 sortable: true,
                 filter: true,
+                minWidth: 80,
               }}
               onCellValueChanged={handleCellValueChanged}
               stopEditingWhenCellsLoseFocus={true}

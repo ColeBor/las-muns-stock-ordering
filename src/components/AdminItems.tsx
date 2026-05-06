@@ -235,21 +235,21 @@ export default function AdminItems() {
   };
 
   const columnDefs: ColDef<Item>[] = [
-    { headerName: "Name", field: "name", sortable: true, filter: true, width: 200 },
-    { headerName: "Type", field: "type", sortable: true, filter: true, width: 120 },
+    { headerName: "Name", field: "name", sortable: true, filter: true, flex: 2, minWidth: 150 },
+    { headerName: "Type", field: "type", sortable: true, filter: true, width: 110 },
     {
       headerName: "Supplier",
       valueGetter: (params) => params.data?.suppliers?.name || "",
       sortable: true,
       filter: true,
-      width: 150,
+      width: 130,
     },
     {
       headerName: "Sub Category",
       field: "sub_category",
       sortable: true,
       filter: true,
-      width: 160,
+      width: 140,
       editable: true,
       cellEditor: "agSelectCellEditor",
       cellEditorParams: { values: ["", ...SUB_CATEGORIES] },
@@ -266,7 +266,7 @@ export default function AdminItems() {
     },
     {
       headerName: "Actions",
-      width: 280,
+      width: 240,
       cellRenderer: (params: { data: Item }) => (
         <div className="flex gap-2">
           <button
@@ -278,9 +278,9 @@ export default function AdminItems() {
           <button
             onClick={() => handleActivateAtAllStores(params.data)}
             className="px-2 py-1 text-xs bg-emerald-500 text-slate-950 rounded font-semibold"
-            title="Upsert store_items rows for every store with is_active=true"
+            title="Activate this item at every store with the entered capacity"
           >
-            Activate at all stores
+            Activate at all
           </button>
           <button
             onClick={() => handleDelete(params.data)}
