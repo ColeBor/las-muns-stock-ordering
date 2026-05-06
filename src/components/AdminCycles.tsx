@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { AgGridReact } from "@/lib/agGrid";
 import type { ColDef, ICellRendererParams } from "ag-grid-community";
@@ -220,6 +221,21 @@ export default function AdminCycles() {
     setActiveTab("details");
     handleEdit(cycle);
   };
+
+  // Auto-open the cycle requested via ?cycle=<id> (e.g. from the archive
+  // page). Fires once after cycles load; subsequent reloads of the cycle
+  // list don't re-trigger.
+  const searchParams = useSearchParams();
+  const cycleParam = searchParams.get("cycle");
+  const [paramHandled, setParamHandled] = useState(false);
+  useEffect(() => {
+    if (paramHandled || !cycleParam || cycles.length === 0) return;
+    const target = cycles.find((c) => c.id === cycleParam);
+    if (target) {
+      openManagePanel(target);
+      setParamHandled(true);
+    }
+  }, [cycleParam, cycles, paramHandled]);
 
   const columnDefs: ColDef<OrderCycle>[] = [
     { headerName: "Name", field: "name", sortable: true, filter: true },
