@@ -11,6 +11,14 @@ type Profile = {
   factory_id: string | null;
 };
 
+const ROLE_LABEL: Record<string, string> = {
+  hq_admin: "Store Manager",
+  store_manager: "Employee",
+  factory_user: "Factory Worker",
+};
+const formatRole = (role: string | null | undefined) =>
+  role ? (ROLE_LABEL[role] ?? role) : "Not assigned";
+
 type Store = {
   id: string;
   name: string;
@@ -209,7 +217,7 @@ export default function SupabaseAuth() {
             <p className="text-slate-300">Signed in as:</p>
             <p className="text-white">{session?.user?.email ?? session?.user?.id}</p>
             <p className="mt-2 text-slate-400">
-              Role: {profile?.role ?? "Not assigned"}
+              Role: {formatRole(profile?.role)}
               {profile?.store_id ? ` · Store ID: ${profile.store_id}` : ""}
               {profile?.factory_id ? ` · Factory ID: ${profile.factory_id}` : ""}
             </p>
@@ -245,7 +253,7 @@ export default function SupabaseAuth() {
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                           <div>
                             <p className="text-slate-300">Profile ID: {userProfile.id}</p>
-                            <p className="text-slate-400">Current role: {userProfile.role}</p>
+                            <p className="text-slate-400">Current role: {formatRole(userProfile.role)}</p>
                           </div>
                           <div className="flex flex-col gap-2 sm:flex-row">
                             <select
@@ -261,9 +269,9 @@ export default function SupabaseAuth() {
                               }}
                               className="rounded-full border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none"
                             >
-                              <option value="hq_admin">HQ admin</option>
-                              <option value="store_manager">Store manager</option>
-                              <option value="factory_user">Factory user</option>
+                              <option value="hq_admin">Store Manager</option>
+                              <option value="store_manager">Employee</option>
+                              <option value="factory_user">Factory Worker</option>
                             </select>
                             <select
                               value={userProfile.store_id ?? ""}

@@ -377,7 +377,6 @@ export default function StoreStockEntry() {
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-xl font-semibold text-white">{store?.name || "Loading..."}</h2>
-              <p className="text-sm text-slate-400">Store Manager Dashboard</p>
             </div>
             <div className="flex items-center gap-4">
               {isHQAdmin && (
@@ -426,22 +425,24 @@ export default function StoreStockEntry() {
                   : "Not set — ask management to set it on the cycle"}
               </span>
             </p>
-            <button
-              type="button"
-              onClick={toggleFinished}
-              disabled={finishToggling || !selectedCycleId || !effectiveStoreId}
-              className={`px-4 py-2 rounded-full font-semibold text-sm disabled:opacity-50 ${
-                finishedAt
-                  ? "bg-slate-700 text-slate-200 hover:bg-slate-600"
-                  : "bg-emerald-500 text-slate-950 hover:bg-emerald-400"
-              }`}
-            >
-              {finishToggling
-                ? "Saving..."
-                : finishedAt
-                  ? "Finished ✓ — click to reopen"
-                  : "Mark as finished"}
-            </button>
+            {selectedCycle?.status !== "delivered" && (
+              <button
+                type="button"
+                onClick={toggleFinished}
+                disabled={finishToggling || !selectedCycleId || !effectiveStoreId}
+                className={`px-4 py-2 rounded-full font-semibold text-sm disabled:opacity-50 ${
+                  finishedAt
+                    ? "bg-slate-700 text-slate-200 hover:bg-slate-600"
+                    : "bg-emerald-500 text-slate-950 hover:bg-emerald-400"
+                }`}
+              >
+                {finishToggling
+                  ? "Saving..."
+                  : finishedAt
+                    ? "Finished ✓ — click to reopen"
+                    : "Mark as finished"}
+              </button>
+            )}
           </div>
 
           {message && <p className="text-sm text-cyan-300">{message}</p>}
