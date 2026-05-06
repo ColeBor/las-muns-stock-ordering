@@ -381,9 +381,9 @@ export default function AdminCycles() {
                     {tab === "details"
                       ? "Details"
                       : tab === "stockEntries"
-                        ? "Stock entries"
+                        ? "Stock Entries"
                         : tab === "factoryCounts"
-                          ? "Factory counts"
+                          ? "Factory Counts"
                           : tab === "allocations"
                             ? "Allocations"
                             : "Overrides"}
@@ -543,6 +543,8 @@ function CycleEditForm(props: {
 type StockEntryRow = {
   store_name: string;
   item_name: string;
+  source: string;
+  sub_category: string | null;
   current_count: number;
   entered_at: string;
 };
@@ -554,7 +556,7 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
       const { data } = await supabase
         .from("stock_entries")
         .select(
-          "current_count,entered_at,stores(name),items(name)",
+          "current_count,entered_at,stores(name),items(name,type,sub_category)",
         )
         .eq("cycle_id", cycleId)
         .order("entered_at", { ascending: false });
@@ -564,13 +566,22 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
             current_count: number;
             entered_at: string;
             stores: { name: string } | null;
-            items: { name: string } | null;
-          }>).map((e) => ({
-            store_name: e.stores?.name ?? "",
-            item_name: e.items?.name ?? "",
-            current_count: e.current_count,
-            entered_at: e.entered_at,
-          })),
+            items: { name: string; type: string; sub_category: string | null } | null;
+          }>).map((e) => {
+            const itemType = e.items?.type ?? "";
+            const source =
+              itemType === "manufactured" ? "factory"
+                : itemType === "purchased" ? "purchase"
+                  : itemType;
+            return {
+              store_name: e.stores?.name ?? "",
+              item_name: e.items?.name ?? "",
+              source,
+              sub_category: e.items?.sub_category ?? null,
+              current_count: e.current_count,
+              entered_at: e.entered_at,
+            };
+          }),
         );
       }
     };
@@ -578,7 +589,39 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
   }, [cycleId]);
 
   const columnDefs: ColDef<StockEntryRow>[] = [
-    { headerName: "Store", field: "store_name", sortable: true, filter: true, width: 150 },
+    {
+      headerName: "Store",
+      field: "store_name",
+      sortable: true,
+      filter: true,
+      width: 150,
+      sort: "asc",
+      sortIndex: 0,
+    },
+    {
+      headerName: "Source",
+      field: "source",
+      sortable: true,
+      filter: true,
+      width: 130,
+      sort: "asc",
+      sortIndex: 1,
+      valueFormatter: (p) => {
+        const v = (p.value as string | undefined) ?? "";
+        if (!v) return "";
+        const spaced = v.replace(/_/g, " ");
+        return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+      },
+    },
+    {
+      headerName: "Category",
+      field: "sub_category",
+      sortable: true,
+      filter: true,
+      width: 140,
+      sort: "asc",
+      sortIndex: 2,
+    },
     { headerName: "Item", field: "item_name", sortable: true, filter: true, flex: 2, minWidth: 150 },
     { headerName: "Count", field: "current_count", sortable: true, filter: true, width: 100 },
     {
@@ -611,6 +654,7 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
 type FactoryCountRow = {
   factory_name: string;
   item_name: string;
+  sub_category: string | null;
   available_qty: number;
   counted_at: string;
 };
@@ -622,7 +666,7 @@ function FactoryCountsTab({ cycleId }: { cycleId: string }) {
       const { data } = await supabase
         .from("factory_counts")
         .select(
-          "available_qty,counted_at,factories(name),items(name)",
+          "available_qty,counted_at,factories(name),items(name,sub_category)",
         )
         .eq("cycle_id", cycleId)
         .order("counted_at", { ascending: false });
@@ -632,10 +676,11 @@ function FactoryCountsTab({ cycleId }: { cycleId: string }) {
             available_qty: number;
             counted_at: string;
             factories: { name: string } | null;
-            items: { name: string } | null;
+            items: { name: string; sub_category: string | null } | null;
           }>).map((e) => ({
             factory_name: e.factories?.name ?? "",
             item_name: e.items?.name ?? "",
+            sub_category: e.items?.sub_category ?? null,
             available_qty: e.available_qty,
             counted_at: e.counted_at,
           })),
@@ -646,7 +691,24 @@ function FactoryCountsTab({ cycleId }: { cycleId: string }) {
   }, [cycleId]);
 
   const columnDefs: ColDef<FactoryCountRow>[] = [
-    { headerName: "Factory", field: "factory_name", sortable: true, filter: true, width: 150 },
+    {
+      headerName: "Factory",
+      field: "factory_name",
+      sortable: true,
+      filter: true,
+      width: 150,
+      sort: "asc",
+      sortIndex: 0,
+    },
+    {
+      headerName: "Category",
+      field: "sub_category",
+      sortable: true,
+      filter: true,
+      width: 140,
+      sort: "asc",
+      sortIndex: 1,
+    },
     { headerName: "Item", field: "item_name", sortable: true, filter: true, flex: 2, minWidth: 150 },
     { headerName: "Available", field: "available_qty", sortable: true, filter: true, width: 110 },
     {
@@ -986,7 +1048,7 @@ function OverridesTab({
     { headerName: "Item", field: "item_name", sortable: true, filter: true, flex: 2, minWidth: 150 },
     { headerName: "Qty", field: "qty", sortable: true, filter: true, width: 90 },
     { headerName: "Reason", field: "reason", sortable: true, filter: true, flex: 1, minWidth: 120 },
-    { headerName: "Set by", field: "set_by", sortable: true, filter: true, flex: 1, minWidth: 130 },
+    { headerName: "Set By", field: "set_by", sortable: true, filter: true, flex: 1, minWidth: 130 },
     ...(readOnly
       ? []
       : [

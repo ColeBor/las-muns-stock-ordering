@@ -273,7 +273,7 @@ export default function AdminStores({
                         : "border-transparent text-slate-400 hover:text-slate-200"
                     }`}
                   >
-                    {tab === "details" ? "Details" : tab === "items" ? "Items & capacity" : "Factory priorities"}
+                    {tab === "details" ? "Details" : tab === "items" ? "Items & Capacity" : "Factory Priorities"}
                   </button>
                 ))}
               </div>

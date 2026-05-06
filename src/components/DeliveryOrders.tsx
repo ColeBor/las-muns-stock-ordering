@@ -225,7 +225,7 @@ export default function DeliveryOrders() {
     return [
       { headerName: "Item", field: "item_name", pinned: "left", flex: 1, minWidth: 180 },
       { headerName: "Type", field: "type", width: 110 },
-      { headerName: "Sub-category", field: "sub_category", width: 140 },
+      { headerName: "Sub-Category", field: "sub_category", width: 140 },
       {
         headerName: "Total",
         field: "total",
