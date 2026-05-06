@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { AgGridReact } from "@/lib/agGrid";
+import type { ColDef, ValueFormatterParams, CellClassParams } from "ag-grid-community";
 
 type Profile = {
   id: string;
@@ -32,12 +34,15 @@ type Allocation = {
   };
 };
 
-type StoreSummary = {
-  store_id: string;
-  store_name: string;
-  order_date: string | null;
-  items: { item_id: string; item_name: string; qty: number }[];
+type DeliveryRow = {
+  type: string;
+  sub_category: string;
+  item_name: string;
+  total: number;
+  [storeName: string]: string | number;
 };
+
+const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 export default function DeliveryOrders() {
   const [session, setSession] = useState<Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"] | null>(null);
@@ -50,7 +55,7 @@ export default function DeliveryOrders() {
 
   const isSignedIn = useMemo(() => !!session?.user, [session]);
   const isHQAdmin = useMemo(() => profile?.role === "hq_admin", [profile]);
-  const canView = isHQAdmin; // Only HQ can view delivery orders
+  const canView = isHQAdmin;
 
   useEffect(() => {
     if (!supabase.auth || typeof supabase.auth.getSession !== "function") {
@@ -141,95 +146,112 @@ export default function DeliveryOrders() {
     }
   }, [cycles, selectedCycleId]);
 
-  type TotalOrderItem = {
-    item_id: string;
-    item_name: string;
-    qty: number;
-  };
+  const { storeNames, deliveryRows } = useMemo(() => {
+    const cycleAllocations = allocations.filter(
+      (a) => a.cycle_id === selectedCycleId && a.qty > 0,
+    );
 
-  const totalOrders = useMemo(() => {
-    const cycleAllocations = allocations.filter((a) => a.cycle_id === selectedCycleId);
-    const metaGroups: Record<string, Record<string, { totalQty: number; items: Record<string, TotalOrderItem> }>> = {};
+    const stores = new Set<string>();
+    type ItemAcc = {
+      type: string;
+      sub_category: string;
+      item_name: string;
+      perStore: Map<string, number>;
+    };
+    const items = new Map<string, ItemAcc>();
 
-    cycleAllocations.forEach((allocation) => {
-      if (allocation.qty === 0) return;
+    cycleAllocations.forEach((a) => {
+      const storeName = a.stores?.name ?? a.store_id;
+      const itemName = a.items?.name ?? a.item_id;
+      const type = titleCase(a.items?.type ?? "uncategorized");
+      const sub = a.items?.sub_category ?? "Uncategorized";
+      stores.add(storeName);
 
-      const rawType = allocation.items?.type ?? "uncategorized";
-      const typeLabel = rawType.charAt(0).toUpperCase() + rawType.slice(1);
-      const subCategory = allocation.items?.sub_category ?? "Uncategorized";
-      const itemId = allocation.item_id;
-      const itemName = allocation.items?.name ?? itemId;
-
-      metaGroups[typeLabel] ??= {};
-      metaGroups[typeLabel][subCategory] ??= { totalQty: 0, items: {} };
-
-      metaGroups[typeLabel][subCategory].totalQty += allocation.qty;
-      metaGroups[typeLabel][subCategory].items[itemId] ??= {
-        item_id: itemId,
-        item_name: itemName,
-        qty: 0,
-      };
-      metaGroups[typeLabel][subCategory].items[itemId].qty += allocation.qty;
-    });
-
-    return Object.entries(metaGroups).map(([typeLabel, subCats]) => ({
-      meta_category: typeLabel,
-      totalQty: Object.values(subCats).reduce((sum, sub) => sum + sub.totalQty, 0),
-      sub_categories: Object.entries(subCats)
-        .map(([subCategory, data]) => ({
-          sub_category: subCategory,
-          totalQty: data.totalQty,
-          items: Object.values(data.items),
-        }))
-        .sort((a, b) => a.sub_category.localeCompare(b.sub_category)),
-    }))
-      .sort((a, b) => a.meta_category.localeCompare(b.meta_category));
-  }, [allocations, selectedCycleId]);
-
-  const storeSummaries = useMemo(() => {
-    const cycleAllocations = allocations.filter((a) => a.cycle_id === selectedCycleId);
-    const storeMap: { [storeId: string]: StoreSummary } = {};
-
-    // One delivery date per cycle, applied to every store in that cycle.
-    const cycleOrderDate =
-      cycles.find((c) => c.id === selectedCycleId)?.order_date ?? null;
-
-    cycleAllocations.forEach((allocation) => {
-      if (!storeMap[allocation.store_id]) {
-        storeMap[allocation.store_id] = {
-          store_id: allocation.store_id,
-          store_name: allocation.stores?.name ?? allocation.store_id,
-          order_date: cycleOrderDate,
-          items: [],
-        };
-      }
-
-      const existingItem = storeMap[allocation.store_id].items.find((i) => i.item_id === allocation.item_id);
-      if (existingItem) {
-        existingItem.qty += allocation.qty;
-      } else {
-        storeMap[allocation.store_id].items.push({
-          item_id: allocation.item_id,
-          item_name: allocation.items?.name ?? allocation.item_id,
-          qty: allocation.qty,
+      if (!items.has(a.item_id)) {
+        items.set(a.item_id, {
+          type,
+          sub_category: sub,
+          item_name: itemName,
+          perStore: new Map(),
         });
       }
+      const acc = items.get(a.item_id)!;
+      acc.perStore.set(storeName, (acc.perStore.get(storeName) ?? 0) + a.qty);
     });
 
-    // Filter out items with 0 quantity and remove empty stores
-    const result = Object.values(storeMap).map(store => ({
-      ...store,
-      items: store.items.filter(item => item.qty > 0),
-    })).filter(store => store.items.length > 0);
+    const sortedStores = Array.from(stores).sort((a, b) => a.localeCompare(b));
+    const sortedItems = Array.from(items.values()).sort((a, b) => {
+      const t = a.type.localeCompare(b.type);
+      if (t !== 0) return t;
+      const s = a.sub_category.localeCompare(b.sub_category);
+      if (s !== 0) return s;
+      return a.item_name.localeCompare(b.item_name);
+    });
+    const rows: DeliveryRow[] = sortedItems.map((acc) => {
+      const row: DeliveryRow = {
+        type: acc.type,
+        sub_category: acc.sub_category,
+        item_name: acc.item_name,
+        total: 0,
+      };
+      let total = 0;
+      sortedStores.forEach((s) => {
+        const qty = acc.perStore.get(s) ?? 0;
+        row[s] = qty;
+        total += qty;
+      });
+      row.total = total;
+      return row;
+    });
 
-    return result;
-  }, [allocations, cycles, selectedCycleId]);
+    return { storeNames: sortedStores, deliveryRows: rows };
+  }, [allocations, selectedCycleId]);
+
+  const totalUnits = useMemo(
+    () => deliveryRows.reduce((sum, r) => sum + r.total, 0),
+    [deliveryRows],
+  );
+  const storeCount = storeNames.length;
+
+  const columnDefs = useMemo<ColDef<DeliveryRow>[]>(() => {
+    const dimZeros = (params: ValueFormatterParams<DeliveryRow>) => {
+      const v = Number(params.value ?? 0);
+      return v === 0 ? "—" : String(v);
+    };
+    const cellClassZero = (params: CellClassParams<DeliveryRow>) =>
+      Number(params.value ?? 0) === 0 ? "text-slate-600" : "";
+    return [
+      { headerName: "Item", field: "item_name", pinned: "left", flex: 1, minWidth: 180 },
+      { headerName: "Type", field: "type", width: 110 },
+      { headerName: "Sub-category", field: "sub_category", width: 140 },
+      {
+        headerName: "Total",
+        field: "total",
+        type: "numericColumn",
+        width: 100,
+        cellClass: "font-semibold",
+      },
+      ...storeNames.map<ColDef<DeliveryRow>>((s) => ({
+        headerName: s,
+        field: s,
+        type: "numericColumn",
+        width: 110,
+        valueFormatter: dimZeros,
+        cellClass: cellClassZero,
+      })),
+    ];
+  }, [storeNames]);
+
+  const cycleDateLabel = useMemo(() => {
+    const cycle = cycles.find((c) => c.id === selectedCycleId);
+    return cycle?.order_date ? new Date(cycle.order_date).toLocaleDateString() : "Not set";
+  }, [cycles, selectedCycleId]);
 
   return (
     <section className="rounded-3xl border border-white/10 bg-slate-950/90 p-8 text-slate-100 shadow-lg shadow-slate-950/20">
       <h1 className="text-3xl font-semibold text-white">Delivery orders</h1>
       <p className="mt-3 text-slate-400">
-        Total orders summed across all stores, and per-store breakdowns for delivery.
+        Total quantity to load for the selected cycle, with each store's share alongside.
       </p>
 
       {!supabaseReady ? (
@@ -248,101 +270,52 @@ export default function DeliveryOrders() {
           <p>This page is only available to HQ administrators.</p>
         </div>
       ) : (
-        <div className="mt-8 space-y-8">
-          <div>
-            <label htmlFor="cycle" className="block text-sm font-medium text-slate-300">
-              Order cycle
-            </label>
-            <select
-              id="cycle"
-              value={selectedCycleId}
-              onChange={(event) => setSelectedCycleId(event.target.value)}
-              className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400"
-            >
-              {cycles.map((cycleOption) => (
-                <option key={cycleOption.id} value={cycleOption.id}>
-                  {new Date(cycleOption.order_date).toLocaleDateString()} ({cycleOption.status.charAt(0).toUpperCase() + cycleOption.status.slice(1)})
-                </option>
-              ))}
-            </select>
+        <div className="mt-8 space-y-6">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div className="min-w-[16rem]">
+              <label htmlFor="cycle" className="block text-sm font-medium text-slate-300">
+                Order cycle
+              </label>
+              <select
+                id="cycle"
+                value={selectedCycleId}
+                onChange={(event) => setSelectedCycleId(event.target.value)}
+                className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400"
+              >
+                {cycles.map((cycleOption) => (
+                  <option key={cycleOption.id} value={cycleOption.id}>
+                    {new Date(cycleOption.order_date).toLocaleDateString()} ({titleCase(cycleOption.status)})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <span className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-300">
+                Delivery: <span className="text-white">{cycleDateLabel}</span>
+              </span>
+              <span className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-300">
+                Total units: <span className="text-white">{totalUnits}</span>
+              </span>
+              <span className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-300">
+                Stores: <span className="text-white">{storeCount}</span>
+              </span>
+            </div>
           </div>
 
-          <div className="grid gap-8 lg:grid-cols-2">
-            <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6">
-              <h2 className="text-xl font-semibold text-white">Total orders to load</h2>
-              <p className="mt-1 text-sm text-slate-400">
-                Order date:{" "}
-                <span className="text-slate-200">
-                  {cycles.find((c) => c.id === selectedCycleId)?.order_date
-                    ? new Date(cycles.find((c) => c.id === selectedCycleId)!.order_date!).toLocaleDateString()
-                    : "Not set"}
-                </span>
-              </p>
-              <div className="mt-4 space-y-3">
-                {loading ? (
-                  <p className="text-slate-400">Loading...</p>
-                ) : totalOrders.length === 0 ? (
-                  <p className="text-slate-400">No allocations found for this cycle.</p>
-                ) : (
-                  totalOrders.map((metaGroup) => (
-                    <div key={metaGroup.meta_category} className="space-y-4 rounded-2xl bg-slate-950/80 p-4">
-                      <div className="border-b border-slate-800 pb-3">
-                        <h3 className="text-lg font-semibold text-white">{metaGroup.meta_category}</h3>
-                        <p className="text-sm text-slate-400">Total: {metaGroup.totalQty}</p>
-                      </div>
-                      <div className="space-y-4">
-                        {metaGroup.sub_categories.map((subGroup) => (
-                          <div key={subGroup.sub_category} className="rounded-2xl bg-slate-900/80 p-4">
-                            <div className="flex items-center justify-between gap-4 border-b border-slate-800 pb-3">
-                              <h4 className="text-sm font-semibold text-cyan-300">{subGroup.sub_category}</h4>
-                              <p className="text-sm text-slate-400">{subGroup.totalQty}</p>
-                            </div>
-                            <div className="mt-3 space-y-2">
-                              {subGroup.items.map((item) => (
-                                <div key={item.item_id} className="flex items-center justify-between gap-4">
-                                  <p className="text-sm text-slate-300">{item.item_name}</p>
-                                  <p className="text-sm font-semibold text-white">{item.qty}</p>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))
-                )}
+          <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-5">
+            {loading ? (
+              <p className="text-slate-400">Loading...</p>
+            ) : deliveryRows.length === 0 ? (
+              <p className="text-slate-400">No allocations found for this cycle.</p>
+            ) : (
+              <div style={{ height: 600 }}>
+                <AgGridReact
+                  rowData={deliveryRows}
+                  columnDefs={columnDefs}
+                  defaultColDef={{ resizable: true, sortable: true, filter: true, minWidth: 80 }}
+                />
               </div>
-            </div>
-
-            <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6">
-              <h2 className="text-xl font-semibold text-white">Per-store breakdown</h2>
-              <div className="mt-4 space-y-4">
-                {loading ? (
-                  <p className="text-slate-400">Loading...</p>
-                ) : storeSummaries.length === 0 ? (
-                  <p className="text-slate-400">No store allocations found for this cycle.</p>
-                ) : (
-                  storeSummaries.map((store) => (
-                    <div key={store.store_id} className="rounded-2xl bg-slate-950/80 p-4">
-                      <div className="flex items-center justify-between gap-4">
-                        <h3 className="text-lg font-semibold text-white">{store.store_name}</h3>
-                        <p className="text-sm text-slate-400">
-                          Order date: {store.order_date ? new Date(store.order_date).toLocaleDateString() : "Not set"}
-                        </p>
-                      </div>
-                      <div className="mt-3 space-y-2">
-                        {store.items.map((item) => (
-                          <div key={item.item_id} className="flex items-center justify-between gap-4">
-                            <p className="text-sm text-slate-400">{item.item_name}</p>
-                            <p className="text-sm font-semibold text-white">{item.qty}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
+            )}
           </div>
         </div>
       )}

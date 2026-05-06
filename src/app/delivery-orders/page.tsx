@@ -3,7 +3,7 @@ import PageShell from "@/components/PageShell";
 
 export default function DeliveryOrdersPage() {
   return (
-    <PageShell>
+    <PageShell wide>
       <DeliveryOrders />
     </PageShell>
   );
