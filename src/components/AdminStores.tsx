@@ -158,7 +158,7 @@ export default function AdminStores() {
       headerName: "Actions",
       width: 200,
       cellRenderer: (params: ICellRendererParams<Store>) => (
-        <div className="flex gap-2">
+        <div className="flex h-full items-center justify-center gap-2">
           <button
             onClick={() => openManagePanel(params.data!)}
             className="px-2 py-1 text-xs bg-cyan-500 text-slate-950 rounded font-semibold"
@@ -660,13 +660,15 @@ function StoreFactoriesTab({ storeId }: { storeId: string }) {
       headerName: "Actions",
       width: 120,
       cellRenderer: (params: ICellRendererParams<StoreFactoryRow>) => (
-        <button
-          onClick={() => removeFactory(params.data!.factory_id)}
-          className="px-2 py-1 text-xs bg-red-500 text-white rounded"
-          disabled={loading}
-        >
-          Remove
-        </button>
+        <div className="flex h-full items-center justify-center gap-2">
+          <button
+            onClick={() => removeFactory(params.data!.factory_id)}
+            className="px-2 py-1 text-xs bg-red-500 text-white rounded"
+            disabled={loading}
+          >
+            Remove
+          </button>
+        </div>
       ),
     },
   ];

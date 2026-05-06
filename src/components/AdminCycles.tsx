@@ -1056,7 +1056,7 @@ function OverridesTab({
             headerName: "Actions",
             width: 160,
             cellRenderer: (params: { data: OverrideRow }) => (
-              <div className="flex gap-2">
+              <div className="flex h-full items-center justify-center gap-2">
                 <button
                   onClick={() => handleEdit(params.data)}
                   className="px-2 py-1 text-xs bg-blue-500 text-white rounded"
