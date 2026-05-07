@@ -57,13 +57,13 @@ export default function HomeAdminLinks() {
             href="/factory-stock"
             className="inline-flex items-center justify-center rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
           >
-            Factory stock
+            Factory Stock
           </Link>
           <Link
             href="/delivery-orders"
             className="inline-flex items-center justify-center rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
           >
-            Delivery orders
+            Delivery Orders
           </Link>
         </div>
       </div>

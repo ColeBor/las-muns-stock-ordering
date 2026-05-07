@@ -161,15 +161,6 @@ export default function SupabaseAuth() {
     setPassword("");
   };
 
-  const signInWithGitHub = async () => {
-    setLoading(true);
-    const { error } = await supabase.auth.signInWithOAuth({ provider: "github" });
-    setLoading(false);
-    if (error) {
-      setMessage(error.message);
-    }
-  };
-
   const updateProfile = async (
     profileId: string,
     patch: Partial<Pick<Profile, "display_name" | "role" | "store_id" | "factory_id">>,
@@ -401,7 +392,7 @@ export default function SupabaseAuth() {
         </div>
       ) : (
         <div className="mt-4 space-y-4">
-          <p className="text-slate-400">Sign in with email and password, magic link, or GitHub.</p>
+          <p className="text-slate-400">Sign in with email and password or magic link.</p>
           
           <div className="flex gap-2">
             <button
@@ -429,13 +420,13 @@ export default function SupabaseAuth() {
           </div>
 
           {usePassword ? (
-            <form onSubmit={signInWithPassword} className="flex flex-col gap-3 sm:flex-row">
+            <form onSubmit={signInWithPassword} className="flex flex-col gap-3">
               <input
                 type="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 placeholder="you@example.com"
-                className="flex-1 rounded-full border border-white/10 bg-slate-900 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400"
+                className="w-full rounded-full border border-white/10 bg-slate-900 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400"
                 required
               />
               <input
@@ -443,45 +434,36 @@ export default function SupabaseAuth() {
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="password"
-                className="flex-1 rounded-full border border-white/10 bg-slate-900 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400"
+                className="w-full rounded-full border border-white/10 bg-slate-900 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400"
                 required
               />
               <button
                 type="submit"
                 disabled={loading}
-                className="rounded-full bg-cyan-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
+                className="w-full rounded-full bg-cyan-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
               >
                 Sign in
               </button>
             </form>
           ) : (
-            <form onSubmit={signInWithOtp} className="flex flex-col gap-3 sm:flex-row">
+            <form onSubmit={signInWithOtp} className="flex flex-col gap-3">
               <input
                 type="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 placeholder="you@example.com"
-                className="flex-1 rounded-full border border-white/10 bg-slate-900 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400"
+                className="w-full rounded-full border border-white/10 bg-slate-900 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400"
                 required
               />
               <button
                 type="submit"
                 disabled={loading}
-                className="rounded-full bg-cyan-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
+                className="w-full rounded-full bg-cyan-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
               >
                 Send magic link
               </button>
             </form>
           )}
-
-          <button
-            type="button"
-            onClick={signInWithGitHub}
-            disabled={loading}
-            className="inline-flex items-center justify-center rounded-full border border-white/10 bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:border-cyan-300 hover:text-cyan-300"
-          >
-            Sign in with GitHub
-          </button>
 
           {message ? <p className="text-sm text-cyan-300">{message}</p> : null}
         </div>
