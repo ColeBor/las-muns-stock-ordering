@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
 import { AgGridReact } from "@/lib/agGrid";
 import type { ColDef, ValueFormatterParams, CellClassParams } from "ag-grid-community";
 
@@ -111,36 +112,41 @@ export default function DeliveryOrders() {
     loadProfile();
   }, [session]);
 
-  useEffect(() => {
+  const loadDeliveryData = useCallback(async () => {
     if (!supabaseReady || !canView) {
       setCycles([]);
       setAllocations([]);
       return;
     }
+    setLoading(true);
+    const [cycleResponse, allocationsResponse] = await Promise.all([
+      supabase.from("order_cycles").select("id,status,order_date").order("created_at", { ascending: false }).limit(5),
+      supabase
+        .from("allocations")
+        .select("cycle_id,store_id,item_id,qty,factory_id,stores(name),items(name,type,sub_category)")
+        .order("cycle_id,store_id,item_id"),
+    ]);
 
-    const loadDeliveryData = async () => {
-      setLoading(true);
-      const [cycleResponse, allocationsResponse] = await Promise.all([
-        supabase.from("order_cycles").select("id,status,order_date").order("created_at", { ascending: false }).limit(5),
-        supabase
-          .from("allocations")
-          .select("cycle_id,store_id,item_id,qty,factory_id,stores(name),items(name,type,sub_category)")
-          .order("cycle_id,store_id,item_id"),
-      ]);
+    if (cycleResponse.data) {
+      setCycles(cycleResponse.data as OrderCycle[]);
+    }
 
-      if (cycleResponse.data) {
-        setCycles(cycleResponse.data as OrderCycle[]);
-      }
+    if (allocationsResponse.data) {
+      setAllocations(allocationsResponse.data as unknown as Allocation[]);
+    }
 
-      if (allocationsResponse.data) {
-        setAllocations(allocationsResponse.data as unknown as Allocation[]);
-      }
+    setLoading(false);
+  }, [supabaseReady, canView]);
 
-      setLoading(false);
-    };
-
+  useEffect(() => {
     loadDeliveryData();
-  }, [canView]);
+  }, [loadDeliveryData]);
+
+  useRealtimeRefetch(
+    canView ? [{ table: "allocations" }, { table: "order_cycles" }] : [],
+    loadDeliveryData,
+    "delivery-orders",
+  );
 
   useEffect(() => {
     if (cycles.length > 0 && !selectedCycleId) {

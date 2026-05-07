@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
 import { AgGridReact } from "@/lib/agGrid";
 import type { ColDef } from "ag-grid-community";
 
@@ -197,40 +198,52 @@ export default function FactoryStock() {
 
   // Lazy-fetch factory_counts and allocation_factories scoped to the
   // selected cycle (and factory, unless in master view).
-  useEffect(() => {
+  const loadCycleScoped = useCallback(async () => {
     if (!canManage || !effectiveFactoryId || !selectedCycleId) {
       setCounts([]);
       setAllocations([]);
       return;
     }
-    const loadCycleScoped = async () => {
-      const countsQuery = supabase
-        .from("factory_counts")
-        .select(
-          "cycle_id,factory_id,item_id,available_qty,counted_at,items(name,type,sub_category)",
-        )
-        .eq("cycle_id", selectedCycleId);
-      const allocationsQuery = supabase
-        .from("allocation_factories")
-        .select("cycle_id,store_id,item_id,qty,factory_id")
-        .eq("cycle_id", selectedCycleId);
-      if (!isMasterView) {
-        countsQuery.eq("factory_id", effectiveFactoryId);
-        allocationsQuery.eq("factory_id", effectiveFactoryId);
-      }
-      const [countsResponse, allocationsResponse] = await Promise.all([
-        countsQuery,
-        allocationsQuery,
-      ]);
-      if (countsResponse.data) {
-        setCounts(countsResponse.data as unknown as FactoryCount[]);
-      }
-      if (allocationsResponse.data) {
-        setAllocations(allocationsResponse.data as AllocationFactory[]);
-      }
-    };
-    loadCycleScoped();
+    const countsQuery = supabase
+      .from("factory_counts")
+      .select(
+        "cycle_id,factory_id,item_id,available_qty,counted_at,items(name,type,sub_category)",
+      )
+      .eq("cycle_id", selectedCycleId);
+    const allocationsQuery = supabase
+      .from("allocation_factories")
+      .select("cycle_id,store_id,item_id,qty,factory_id")
+      .eq("cycle_id", selectedCycleId);
+    if (!isMasterView) {
+      countsQuery.eq("factory_id", effectiveFactoryId);
+      allocationsQuery.eq("factory_id", effectiveFactoryId);
+    }
+    const [countsResponse, allocationsResponse] = await Promise.all([
+      countsQuery,
+      allocationsQuery,
+    ]);
+    if (countsResponse.data) {
+      setCounts(countsResponse.data as unknown as FactoryCount[]);
+    }
+    if (allocationsResponse.data) {
+      setAllocations(allocationsResponse.data as AllocationFactory[]);
+    }
   }, [canManage, effectiveFactoryId, isMasterView, selectedCycleId]);
+
+  useEffect(() => {
+    loadCycleScoped();
+  }, [loadCycleScoped]);
+
+  useRealtimeRefetch(
+    canManage && effectiveFactoryId && selectedCycleId
+      ? [
+          { table: "factory_counts", filter: `cycle_id=eq.${selectedCycleId}` },
+          { table: "allocation_factories", filter: `cycle_id=eq.${selectedCycleId}` },
+        ]
+      : [],
+    loadCycleScoped,
+    `factory-${effectiveFactoryId}-cycle-${selectedCycleId}-stock`,
+  );
 
   useEffect(() => {
     if (cycles.length > 0 && !selectedCycleId) {

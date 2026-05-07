@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
 import { AgGridReact } from "@/lib/agGrid";
 import type { ColDef, ICellRendererParams } from "ag-grid-community";
 
@@ -84,7 +85,7 @@ export default function AdminCycles() {
     loadProfile();
   }, [session]);
 
-  const reloadCycles = async () => {
+  const reloadCycles = useCallback(async () => {
     const { data } = await supabase
       .from("order_cycles")
       .select("*, cycle_stores(stores(id, name))")
@@ -98,7 +99,13 @@ export default function AdminCycles() {
       return 0; // preserve created_at desc within each group
     });
     setCycles(sorted);
-  };
+  }, []);
+
+  useRealtimeRefetch(
+    canManage ? [{ table: "order_cycles" }, { table: "cycle_stores" }] : [],
+    reloadCycles,
+    "admin-cycles-list",
+  );
 
   useEffect(() => {
     if (!canManage) {
@@ -551,48 +558,55 @@ type StockEntryRow = {
 
 function StockEntriesTab({ cycleId }: { cycleId: string }) {
   const [rows, setRows] = useState<StockEntryRow[]>([]);
-  useEffect(() => {
-    const load = async () => {
-      const { data } = await supabase
-        .from("stock_entries")
-        .select(
-          "current_count,entered_at,stores(name),items(name,type,sub_category)",
-        )
-        .eq("cycle_id", cycleId)
-        .order("entered_at", { ascending: false });
-      if (data) {
-        setRows(
-          (data as unknown as Array<{
-            current_count: number;
-            entered_at: string;
-            stores: { name: string } | null;
-            items: { name: string; type: string; sub_category: string | null } | null;
-          }>)
-            .map((e) => {
-              const itemType = e.items?.type ?? "";
-              const source =
-                itemType === "manufactured" ? "factory"
-                  : itemType === "purchased" ? "purchase"
-                    : itemType;
-              return {
-                store_name: e.stores?.name ?? "",
-                item_name: e.items?.name ?? "",
-                source,
-                sub_category: e.items?.sub_category ?? null,
-                current_count: e.current_count,
-                entered_at: e.entered_at,
-              };
-            })
-            .sort((a, b) =>
-              a.store_name.localeCompare(b.store_name) ||
-              a.source.localeCompare(b.source) ||
-              (a.sub_category ?? "").localeCompare(b.sub_category ?? ""),
-            ),
-        );
-      }
-    };
-    load();
+  const load = useCallback(async () => {
+    const { data } = await supabase
+      .from("stock_entries")
+      .select(
+        "current_count,entered_at,stores(name),items(name,type,sub_category)",
+      )
+      .eq("cycle_id", cycleId)
+      .order("entered_at", { ascending: false });
+    if (data) {
+      setRows(
+        (data as unknown as Array<{
+          current_count: number;
+          entered_at: string;
+          stores: { name: string } | null;
+          items: { name: string; type: string; sub_category: string | null } | null;
+        }>)
+          .map((e) => {
+            const itemType = e.items?.type ?? "";
+            const source =
+              itemType === "manufactured" ? "factory"
+                : itemType === "purchased" ? "purchase"
+                  : itemType;
+            return {
+              store_name: e.stores?.name ?? "",
+              item_name: e.items?.name ?? "",
+              source,
+              sub_category: e.items?.sub_category ?? null,
+              current_count: e.current_count,
+              entered_at: e.entered_at,
+            };
+          })
+          .sort((a, b) =>
+            a.store_name.localeCompare(b.store_name) ||
+            a.source.localeCompare(b.source) ||
+            (a.sub_category ?? "").localeCompare(b.sub_category ?? ""),
+          ),
+      );
+    }
   }, [cycleId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useRealtimeRefetch(
+    [{ table: "stock_entries", filter: `cycle_id=eq.${cycleId}` }],
+    load,
+    `cycle-${cycleId}-stock-entries`,
+  );
 
   const columnDefs: ColDef<StockEntryRow>[] = [
     {
@@ -661,39 +675,46 @@ type FactoryCountRow = {
 
 function FactoryCountsTab({ cycleId }: { cycleId: string }) {
   const [rows, setRows] = useState<FactoryCountRow[]>([]);
-  useEffect(() => {
-    const load = async () => {
-      const { data } = await supabase
-        .from("factory_counts")
-        .select(
-          "available_qty,counted_at,factories(name),items(name,sub_category)",
-        )
-        .eq("cycle_id", cycleId)
-        .order("counted_at", { ascending: false });
-      if (data) {
-        setRows(
-          (data as unknown as Array<{
-            available_qty: number;
-            counted_at: string;
-            factories: { name: string } | null;
-            items: { name: string; sub_category: string | null } | null;
-          }>)
-            .map((e) => ({
-              factory_name: e.factories?.name ?? "",
-              item_name: e.items?.name ?? "",
-              sub_category: e.items?.sub_category ?? null,
-              available_qty: e.available_qty,
-              counted_at: e.counted_at,
-            }))
-            .sort((a, b) =>
-              a.factory_name.localeCompare(b.factory_name) ||
-              (a.sub_category ?? "").localeCompare(b.sub_category ?? ""),
-            ),
-        );
-      }
-    };
-    load();
+  const load = useCallback(async () => {
+    const { data } = await supabase
+      .from("factory_counts")
+      .select(
+        "available_qty,counted_at,factories(name),items(name,sub_category)",
+      )
+      .eq("cycle_id", cycleId)
+      .order("counted_at", { ascending: false });
+    if (data) {
+      setRows(
+        (data as unknown as Array<{
+          available_qty: number;
+          counted_at: string;
+          factories: { name: string } | null;
+          items: { name: string; sub_category: string | null } | null;
+        }>)
+          .map((e) => ({
+            factory_name: e.factories?.name ?? "",
+            item_name: e.items?.name ?? "",
+            sub_category: e.items?.sub_category ?? null,
+            available_qty: e.available_qty,
+            counted_at: e.counted_at,
+          }))
+          .sort((a, b) =>
+            a.factory_name.localeCompare(b.factory_name) ||
+            (a.sub_category ?? "").localeCompare(b.sub_category ?? ""),
+          ),
+      );
+    }
   }, [cycleId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useRealtimeRefetch(
+    [{ table: "factory_counts", filter: `cycle_id=eq.${cycleId}` }],
+    load,
+    `cycle-${cycleId}-factory-counts`,
+  );
 
   const columnDefs: ColDef<FactoryCountRow>[] = [
     {
@@ -763,7 +784,7 @@ function AllocationsTab({
   const [message, setMessage] = useState<string | null>(null);
   const isDelivered = cycleStatus === "delivered";
 
-  const reload = async () => {
+  const reload = useCallback(async () => {
     const { data } = await supabase
       .from("allocations")
       .select(
@@ -796,11 +817,17 @@ function AllocationsTab({
           ),
       );
     }
-  };
+  }, [cycleId]);
 
   useEffect(() => {
     reload();
-  }, [cycleId]);
+  }, [reload]);
+
+  useRealtimeRefetch(
+    [{ table: "allocations", filter: `cycle_id=eq.${cycleId}` }],
+    reload,
+    `cycle-${cycleId}-allocations`,
+  );
 
   const runAllocations = async () => {
     setRunning(true);

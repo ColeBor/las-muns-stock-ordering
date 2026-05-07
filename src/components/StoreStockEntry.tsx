@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
 import { AgGridReact } from "@/lib/agGrid";
 import type { ColDef } from "ag-grid-community";
 
@@ -236,21 +237,35 @@ export default function StoreStockEntry() {
 
   // Lazy-fetch stock entries scoped to (cycle, store) only — no embed,
   // no cross-cycle data. Refetched whenever the selection changes.
-  useEffect(() => {
+  const loadEntries = useCallback(async () => {
     if (!selectedCycleId || !effectiveStoreId) {
       setEntries([]);
       return;
     }
-    const loadEntries = async () => {
-      const { data } = await supabase
-        .from("stock_entries")
-        .select("cycle_id,store_id,item_id,current_count,entered_at")
-        .eq("cycle_id", selectedCycleId)
-        .eq("store_id", effectiveStoreId);
-      if (data) setEntries(data as StockEntry[]);
-    };
-    loadEntries();
+    const { data } = await supabase
+      .from("stock_entries")
+      .select("cycle_id,store_id,item_id,current_count,entered_at")
+      .eq("cycle_id", selectedCycleId)
+      .eq("store_id", effectiveStoreId);
+    if (data) setEntries(data as StockEntry[]);
   }, [selectedCycleId, effectiveStoreId]);
+
+  useEffect(() => {
+    loadEntries();
+  }, [loadEntries]);
+
+  useRealtimeRefetch(
+    selectedCycleId && effectiveStoreId
+      ? [
+          {
+            table: "stock_entries",
+            filter: `cycle_id=eq.${selectedCycleId}`,
+          },
+        ]
+      : [],
+    loadEntries,
+    `store-${effectiveStoreId}-cycle-${selectedCycleId}-entries`,
+  );
 
   useEffect(() => {
     if (cycles.length > 0 && !selectedCycleId) {
