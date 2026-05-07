@@ -163,47 +163,114 @@ export default function AdminItems() {
     setItems(items.filter((i) => i.id !== item.id));
   };
 
-  const handleActivateAtAllStores = async (item: Item) => {
-    const capacityInput = prompt(
-      `Activate "${item.name}" at every store. Capacity to apply:`,
-      "100",
+  const [activateAtItem, setActivateAtItem] = useState<Item | null>(null);
+  const [activateRows, setActivateRows] = useState<
+    Array<{ store_id: string; store_name: string; active: boolean; original_active: boolean }>
+  >([]);
+  const [activateLoading, setActivateLoading] = useState(false);
+  const [activateSaving, setActivateSaving] = useState(false);
+
+  const openActivateAt = async (item: Item) => {
+    setActivateAtItem(item);
+    setActivateRows([]);
+    setActivateLoading(true);
+    const [storesRes, storeItemsRes] = await Promise.all([
+      supabase.from("stores").select("id,name").order("name"),
+      supabase
+        .from("store_items")
+        .select("store_id,is_active")
+        .eq("item_id", item.id),
+    ]);
+    setActivateLoading(false);
+    if (storesRes.error || !storesRes.data) {
+      setMessage(storesRes.error?.message ?? "Failed to load stores");
+      setActivateAtItem(null);
+      return;
+    }
+    const activeMap = new Map<string, boolean>();
+    (storeItemsRes.data ?? []).forEach((si) => {
+      activeMap.set(si.store_id as string, !!si.is_active);
+    });
+    setActivateRows(
+      storesRes.data.map((s) => {
+        const active = activeMap.get(s.id) ?? false;
+        return {
+          store_id: s.id,
+          store_name: s.name,
+          active,
+          original_active: active,
+        };
+      }),
     );
-    if (capacityInput === null) return;
-    const capacity = parseInt(capacityInput, 10);
-    if (Number.isNaN(capacity) || capacity < 0) {
-      setMessage("Capacity must be a non-negative number.");
+  };
+
+  const closeActivateAt = () => {
+    setActivateAtItem(null);
+    setActivateRows([]);
+  };
+
+  const toggleActivateRow = (storeId: string) => {
+    setActivateRows((prev) =>
+      prev.map((r) => (r.store_id === storeId ? { ...r, active: !r.active } : r)),
+    );
+  };
+
+  const setAllActivateRows = (active: boolean) => {
+    setActivateRows((prev) => prev.map((r) => ({ ...r, active })));
+  };
+
+  const saveActivateAt = async () => {
+    if (!activateAtItem) return;
+    const toActivate = activateRows.filter((r) => r.active && !r.original_active);
+    const toDeactivate = activateRows.filter((r) => !r.active && r.original_active);
+    if (toActivate.length === 0 && toDeactivate.length === 0) {
+      closeActivateAt();
+      return;
+    }
+    setActivateSaving(true);
+    const now = new Date().toISOString();
+    const errors: string[] = [];
+
+    if (toActivate.length > 0) {
+      const { error } = await supabase.from("store_items").upsert(
+        toActivate.map((r) => ({
+          store_id: r.store_id,
+          item_id: activateAtItem.id,
+          is_active: true,
+          capacity: 0,
+          activated_at: now,
+        })),
+        { onConflict: "store_id,item_id" },
+      );
+      if (error) errors.push(error.message);
+    }
+
+    if (toDeactivate.length > 0) {
+      const { error } = await supabase
+        .from("store_items")
+        .update({ is_active: false, deactivated_at: now })
+        .in(
+          "store_id",
+          toDeactivate.map((r) => r.store_id),
+        )
+        .eq("item_id", activateAtItem.id);
+      if (error) errors.push(error.message);
+    }
+
+    setActivateSaving(false);
+
+    if (errors.length > 0) {
+      setMessage(`Errors: ${errors.join("; ")}`);
       return;
     }
 
-    const { data: storesData, error: storesErr } = await supabase
-      .from("stores")
-      .select("id");
-    if (storesErr || !storesData) {
-      setMessage(storesErr?.message ?? "Failed to load stores");
-      return;
-    }
-    if (storesData.length === 0) {
-      setMessage("No stores exist yet.");
-      return;
-    }
-
-    const rows = storesData.map((s) => ({
-      store_id: s.id,
-      item_id: item.id,
-      is_active: true,
-      capacity,
-      activated_at: new Date().toISOString(),
-    }));
-    const { error } = await supabase
-      .from("store_items")
-      .upsert(rows, { onConflict: "store_id,item_id" });
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-    setMessage(
-      `Activated "${item.name}" at ${storesData.length} store${storesData.length === 1 ? "" : "s"} with capacity ${capacity}.`,
-    );
+    const parts: string[] = [];
+    if (toActivate.length > 0) parts.push(`activated at ${toActivate.length}`);
+    if (toDeactivate.length > 0) parts.push(`deactivated at ${toDeactivate.length}`);
+    setMessage(`"${activateAtItem.name}" ${parts.join(", ")} store${
+      toActivate.length + toDeactivate.length === 1 ? "" : "s"
+    }.`);
+    closeActivateAt();
   };
 
   // Inline edit on the grid for the three category fields.
@@ -236,20 +303,32 @@ export default function AdminItems() {
 
   const columnDefs: ColDef<Item>[] = [
     { headerName: "Name", field: "name", sortable: true, filter: true, flex: 2, minWidth: 150 },
-    { headerName: "Type", field: "type", sortable: true, filter: true, width: 110 },
+    {
+      headerName: "Type",
+      field: "type",
+      sortable: true,
+      filter: true,
+      width: 130,
+      valueFormatter: (p) => {
+        const v = (p.value as string | undefined) ?? "";
+        return v ? v.charAt(0).toUpperCase() + v.slice(1) : "";
+      },
+    },
     {
       headerName: "Supplier",
       valueGetter: (params) => params.data?.suppliers?.name || "",
       sortable: true,
       filter: true,
-      width: 130,
+      flex: 1,
+      minWidth: 130,
     },
     {
-      headerName: "Sub Category",
+      headerName: "Sub-Category",
       field: "sub_category",
       sortable: true,
       filter: true,
-      width: 140,
+      flex: 1,
+      minWidth: 140,
       editable: true,
       cellEditor: "agSelectCellEditor",
       cellEditorParams: { values: ["", ...SUB_CATEGORIES] },
@@ -259,7 +338,8 @@ export default function AdminItems() {
       field: "packaging_type",
       sortable: true,
       filter: true,
-      width: 130,
+      flex: 1,
+      minWidth: 130,
       editable: true,
       cellEditor: "agSelectCellEditor",
       cellEditorParams: { values: ["", ...PACKAGING_TYPES] },
@@ -276,11 +356,11 @@ export default function AdminItems() {
             Edit
           </button>
           <button
-            onClick={() => handleActivateAtAllStores(params.data)}
+            onClick={() => openActivateAt(params.data)}
             className="px-2 py-1 text-xs bg-emerald-500 text-slate-950 rounded font-semibold"
-            title="Activate this item at every store with the entered capacity"
+            title="Choose which stores carry this item"
           >
-            Activate at all
+            Activate At
           </button>
           <button
             onClick={() => handleDelete(params.data)}
@@ -431,6 +511,87 @@ export default function AdminItems() {
               onCellValueChanged={handleCellValueChanged}
               stopEditingWhenCellsLoseFocus
             />
+          </div>
+        </div>
+      )}
+
+      {activateAtItem && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4"
+          onClick={closeActivateAt}
+        >
+          <div
+            className="w-full max-w-md rounded-3xl border border-white/10 bg-slate-900 p-6 text-slate-100 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold text-white">Activate at stores</h2>
+                <p className="mt-1 text-sm text-slate-400">{activateAtItem.name}</p>
+              </div>
+              <button
+                onClick={closeActivateAt}
+                className="text-slate-400 hover:text-white"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            {activateLoading ? (
+              <p className="text-sm text-slate-400">Loading stores...</p>
+            ) : activateRows.length === 0 ? (
+              <p className="text-sm text-slate-400">No stores exist yet.</p>
+            ) : (
+              <>
+                <div className="mb-3 flex gap-2">
+                  <button
+                    onClick={() => setAllActivateRows(true)}
+                    className="rounded-full bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-slate-950"
+                  >
+                    Activate all
+                  </button>
+                  <button
+                    onClick={() => setAllActivateRows(false)}
+                    className="rounded-full bg-slate-700 px-3 py-1.5 text-xs font-semibold text-white"
+                  >
+                    Deactivate all
+                  </button>
+                </div>
+                <div className="max-h-72 overflow-y-auto rounded-2xl bg-slate-950/60 p-2">
+                  {activateRows.map((r) => (
+                    <label
+                      key={r.store_id}
+                      className="flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2 hover:bg-slate-900"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={r.active}
+                        onChange={() => toggleActivateRow(r.store_id)}
+                      />
+                      <span className="text-sm text-slate-200">{r.store_name}</span>
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={closeActivateAt}
+                disabled={activateSaving}
+                className="rounded-full bg-slate-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveActivateAt}
+                disabled={activateLoading || activateSaving || activateRows.length === 0}
+                className="rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
+              >
+                {activateSaving ? "Saving..." : "Save"}
+              </button>
+            </div>
           </div>
         </div>
       )}

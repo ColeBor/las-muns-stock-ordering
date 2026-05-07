@@ -222,6 +222,7 @@ export default function DeliveryOrders() {
     };
     const cellClassZero = (params: CellClassParams<DeliveryRow>) =>
       Number(params.value ?? 0) === 0 ? "text-slate-600" : "";
+    const numericCellStyle = { textAlign: "right" as const };
     return [
       { headerName: "Item", field: "item_name", pinned: "left", flex: 1, minWidth: 180 },
       { headerName: "Type", field: "type", width: 110 },
@@ -229,16 +230,16 @@ export default function DeliveryOrders() {
       {
         headerName: "Total",
         field: "total",
-        type: "numericColumn",
         width: 100,
+        cellStyle: numericCellStyle,
         cellClass: "font-semibold",
       },
       ...storeNames.map<ColDef<DeliveryRow>>((s) => ({
         headerName: s,
         field: s,
-        type: "numericColumn",
         width: 110,
         valueFormatter: dimZeros,
+        cellStyle: numericCellStyle,
         cellClass: cellClassZero,
       })),
     ];

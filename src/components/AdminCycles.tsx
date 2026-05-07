@@ -567,21 +567,27 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
             entered_at: string;
             stores: { name: string } | null;
             items: { name: string; type: string; sub_category: string | null } | null;
-          }>).map((e) => {
-            const itemType = e.items?.type ?? "";
-            const source =
-              itemType === "manufactured" ? "factory"
-                : itemType === "purchased" ? "purchase"
-                  : itemType;
-            return {
-              store_name: e.stores?.name ?? "",
-              item_name: e.items?.name ?? "",
-              source,
-              sub_category: e.items?.sub_category ?? null,
-              current_count: e.current_count,
-              entered_at: e.entered_at,
-            };
-          }),
+          }>)
+            .map((e) => {
+              const itemType = e.items?.type ?? "";
+              const source =
+                itemType === "manufactured" ? "factory"
+                  : itemType === "purchased" ? "purchase"
+                    : itemType;
+              return {
+                store_name: e.stores?.name ?? "",
+                item_name: e.items?.name ?? "",
+                source,
+                sub_category: e.items?.sub_category ?? null,
+                current_count: e.current_count,
+                entered_at: e.entered_at,
+              };
+            })
+            .sort((a, b) =>
+              a.store_name.localeCompare(b.store_name) ||
+              a.source.localeCompare(b.source) ||
+              (a.sub_category ?? "").localeCompare(b.sub_category ?? ""),
+            ),
         );
       }
     };
@@ -595,8 +601,6 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
       sortable: true,
       filter: true,
       width: 150,
-      sort: "asc",
-      sortIndex: 0,
     },
     {
       headerName: "Source",
@@ -604,8 +608,6 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
       sortable: true,
       filter: true,
       width: 130,
-      sort: "asc",
-      sortIndex: 1,
       valueFormatter: (p) => {
         const v = (p.value as string | undefined) ?? "";
         if (!v) return "";
@@ -619,8 +621,6 @@ function StockEntriesTab({ cycleId }: { cycleId: string }) {
       sortable: true,
       filter: true,
       width: 140,
-      sort: "asc",
-      sortIndex: 2,
     },
     { headerName: "Item", field: "item_name", sortable: true, filter: true, flex: 2, minWidth: 150 },
     { headerName: "Count", field: "current_count", sortable: true, filter: true, width: 100 },
@@ -677,13 +677,18 @@ function FactoryCountsTab({ cycleId }: { cycleId: string }) {
             counted_at: string;
             factories: { name: string } | null;
             items: { name: string; sub_category: string | null } | null;
-          }>).map((e) => ({
-            factory_name: e.factories?.name ?? "",
-            item_name: e.items?.name ?? "",
-            sub_category: e.items?.sub_category ?? null,
-            available_qty: e.available_qty,
-            counted_at: e.counted_at,
-          })),
+          }>)
+            .map((e) => ({
+              factory_name: e.factories?.name ?? "",
+              item_name: e.items?.name ?? "",
+              sub_category: e.items?.sub_category ?? null,
+              available_qty: e.available_qty,
+              counted_at: e.counted_at,
+            }))
+            .sort((a, b) =>
+              a.factory_name.localeCompare(b.factory_name) ||
+              (a.sub_category ?? "").localeCompare(b.sub_category ?? ""),
+            ),
         );
       }
     };
@@ -697,8 +702,6 @@ function FactoryCountsTab({ cycleId }: { cycleId: string }) {
       sortable: true,
       filter: true,
       width: 150,
-      sort: "asc",
-      sortIndex: 0,
     },
     {
       headerName: "Category",
@@ -706,8 +709,6 @@ function FactoryCountsTab({ cycleId }: { cycleId: string }) {
       sortable: true,
       filter: true,
       width: 140,
-      sort: "asc",
-      sortIndex: 1,
     },
     { headerName: "Item", field: "item_name", sortable: true, filter: true, flex: 2, minWidth: 150 },
     { headerName: "Available", field: "available_qty", sortable: true, filter: true, width: 110 },
@@ -778,15 +779,21 @@ function AllocationsTab({
           stores: { name: string } | null;
           items: { name: string; sub_category: string | null } | null;
           factories: { name: string } | null;
-        }>).map((a) => ({
-          store_name: a.stores?.name ?? "",
-          item_name: a.items?.name ?? "",
-          sub_category: a.items?.sub_category ?? null,
-          qty: a.qty,
-          source: a.source,
-          factory_name: a.factories?.name ?? "",
-          shortfall: a.shortfall,
-        })),
+        }>)
+          .map((a) => ({
+            store_name: a.stores?.name ?? "",
+            item_name: a.items?.name ?? "",
+            sub_category: a.items?.sub_category ?? null,
+            qty: a.qty,
+            source: a.source,
+            factory_name: a.factories?.name ?? "",
+            shortfall: a.shortfall,
+          }))
+          .sort((x, y) =>
+            x.store_name.localeCompare(y.store_name) ||
+            x.source.localeCompare(y.source) ||
+            (x.sub_category ?? "").localeCompare(y.sub_category ?? ""),
+          ),
       );
     }
   };
@@ -834,8 +841,6 @@ function AllocationsTab({
       sortable: true,
       filter: true,
       width: 150,
-      sort: "asc",
-      sortIndex: 0,
     },
     {
       headerName: "Source",
@@ -843,8 +848,6 @@ function AllocationsTab({
       sortable: true,
       filter: true,
       width: 120,
-      sort: "asc",
-      sortIndex: 1,
       valueFormatter: (p) => {
         const v = (p.value as string | undefined) ?? "";
         if (!v) return "";
@@ -858,8 +861,6 @@ function AllocationsTab({
       sortable: true,
       filter: true,
       width: 140,
-      sort: "asc",
-      sortIndex: 2,
     },
     { headerName: "Item", field: "item_name", sortable: true, filter: true, flex: 2, minWidth: 150 },
     { headerName: "Qty", field: "qty", sortable: true, filter: true, width: 90 },

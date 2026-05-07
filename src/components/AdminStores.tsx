@@ -483,7 +483,17 @@ function StoreItemsTab({ storeId }: { storeId: string }) {
 
   const columnDefs: ColDef<StoreItemRow>[] = [
     { headerName: "Name", field: "name", sortable: true, filter: true, flex: 2, minWidth: 150 },
-    { headerName: "Type", field: "type", sortable: true, filter: true, width: 110 },
+    {
+      headerName: "Type",
+      field: "type",
+      sortable: true,
+      filter: true,
+      width: 130,
+      valueFormatter: (p) => {
+        const v = (p.value as string | undefined) ?? "";
+        return v ? v.charAt(0).toUpperCase() + v.slice(1) : "";
+      },
+    },
     {
       headerName: "Active",
       field: "is_active",

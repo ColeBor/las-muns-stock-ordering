@@ -24,5 +24,14 @@ const lasMunsTheme = themeAlpine.withPart(colorSchemeDark);
 export function AgGridReact<TData>(
   props: AgGridReactProps<TData>,
 ): React.ReactElement {
-  return React.createElement(BaseAgGridReact, { theme: lasMunsTheme, ...props });
+  const mergedDefaultColDef = {
+    wrapHeaderText: true,
+    autoHeaderHeight: true,
+    ...(props.defaultColDef ?? {}),
+  } as AgGridReactProps<TData>["defaultColDef"];
+  return React.createElement(BaseAgGridReact, {
+    theme: lasMunsTheme,
+    ...props,
+    defaultColDef: mergedDefaultColDef,
+  });
 }
