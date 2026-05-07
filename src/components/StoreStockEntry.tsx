@@ -383,12 +383,29 @@ export default function StoreStockEntry() {
     },
   ];
 
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+  };
+
   return (
     <section className="rounded-3xl border border-white/10 bg-slate-950/90 p-8 text-slate-100 shadow-lg shadow-slate-950/20">
-      <h1 className="text-3xl font-semibold text-white">Store Stock Entry</h1>
-      <p className="mt-3 text-slate-400">
-        Enter current stock counts and order dates for your store's active items. Use the spreadsheet interface below.
-      </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-semibold text-white">Store Stock Entry</h1>
+          <p className="mt-3 text-slate-400">
+            Enter current stock counts and order dates for your store's active items. Use the spreadsheet interface below.
+          </p>
+        </div>
+        {isSignedIn && (
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-slate-200"
+          >
+            Sign out
+          </button>
+        )}
+      </div>
 
       {!isSignedIn ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
