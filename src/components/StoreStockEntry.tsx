@@ -2,9 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { formatLocalDate, parseLocalDate } from "@/lib/dateOnly";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
 import { AgGridReact } from "@/lib/agGrid";
-import type { ColDef } from "ag-grid-community";
+import type { ColDef, ICellRendererParams } from "ag-grid-community";
+
+// Items in these sub_categories are box-traced — their count is
+// auto-decremented when a freezer box is logged in the Box Trace Log, so
+// the worker doesn't need to manually count them end-of-week. Keep in
+// sync with the Box Trace Log UI's category dropdown.
+const BOX_TRACED_CATEGORIES = ["Empanada", "Dessert"];
 
 type Profile = {
   id: string;
@@ -55,6 +62,10 @@ type StockEntryRow = {
   has_existing_entry: boolean;
   sub_category: string | null;
   packaging_type: string | null;
+  // True when this is a box-traced item the store has never written an
+  // entry for in any prior delivered cycle. The worker needs to do a
+  // one-time calibration count; after that, traces handle decrements.
+  needs_calibration: boolean;
 };
 
 export default function StoreStockEntry() {
@@ -66,6 +77,12 @@ export default function StoreStockEntry() {
   const [cycles, setCycles] = useState<OrderCycle[]>([]);
   const [storeItems, setStoreItems] = useState<StoreItem[]>([]);
   const [entries, setEntries] = useState<StockEntry[]>([]);
+  // Set of item_ids the store has prior delivered-cycle stock_entries
+  // for. Used to detect "first cycle ever for this item" → show the
+  // CALIBRATE badge on those Auto rows.
+  const [priorEntryItemIds, setPriorEntryItemIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [selectedCycleId, setSelectedCycleId] = useState("");
   const [gridData, setGridData] = useState<StockEntryRow[]>([]);
   const [message, setMessage] = useState<string | null>(null);
@@ -74,14 +91,14 @@ export default function StoreStockEntry() {
   const [finishToggling, setFinishToggling] = useState(false);
 
   const isSignedIn = useMemo(() => !!session?.user, [session]);
-  const isHQAdmin = useMemo(() => profile?.role === "hq_admin", [profile]);
   const isStoreManager = useMemo(() => profile?.role === "store_manager", [profile]);
+  const isEmployee = useMemo(() => profile?.role === "employee", [profile]);
   const hasAssignedStore = useMemo(() => !!profile?.store_id, [profile]);
   const effectiveStoreId = useMemo(
-    () => (isHQAdmin ? selectedStoreId || null : profile?.store_id ?? null),
-    [isHQAdmin, selectedStoreId, profile?.store_id],
+    () => (isStoreManager ? selectedStoreId || null : profile?.store_id ?? null),
+    [isStoreManager, selectedStoreId, profile?.store_id],
   );
-  const canManage = (isStoreManager && hasAssignedStore) || (isHQAdmin && !!effectiveStoreId);
+  const canManage = (isEmployee && hasAssignedStore) || (isStoreManager && !!effectiveStoreId);
   const selectedCycle = useMemo(
     () => cycles.find((c) => c.id === selectedCycleId) ?? null,
     [cycles, selectedCycleId],
@@ -129,13 +146,13 @@ export default function StoreStockEntry() {
   }, [session]);
 
   useEffect(() => {
-    if (!isHQAdmin) return;
+    if (!isStoreManager) return;
     const loadStores = async () => {
       const { data } = await supabase.from("stores").select("id,name").order("name");
       if (data) setAllStores(data as Store[]);
     };
     loadStores();
-  }, [isHQAdmin]);
+  }, [isStoreManager]);
 
   // Load this (cycle, store)'s finished_at so we know whether the
   // employee has already marked their stock entry done for this cycle.
@@ -161,6 +178,35 @@ export default function StoreStockEntry() {
     setFinishToggling(true);
     setMessage(null);
     const newValue = finishedAt ? null : new Date().toISOString();
+
+    // When FINISHING, sweep any active grid rows that don't yet have a
+    // stock_entries row and write them at their current grid value
+    // (typically 0). The per-cell upsert only fires when the value
+    // actually changes, so a store with genuine zeros on the default 0
+    // cells could mark Finish without saving a single row — invisible to
+    // the allocator. Writing the zeros explicitly fixes that.
+    if (newValue) {
+      const missing = gridData
+        .filter((r) => r.is_active && !r.has_existing_entry)
+        .map((r) => ({
+          cycle_id: selectedCycleId,
+          store_id: effectiveStoreId,
+          item_id: r.item_id,
+          current_count: r.current_count,
+          entered_by: session?.user?.email ?? session?.user?.id ?? null,
+        }));
+      if (missing.length > 0) {
+        const { error: upsertErr } = await supabase
+          .from("stock_entries")
+          .upsert(missing, { onConflict: "cycle_id,store_id,item_id" });
+        if (upsertErr) {
+          setMessage(upsertErr.message);
+          setFinishToggling(false);
+          return;
+        }
+      }
+    }
+
     const { error } = await supabase
       .from("cycle_stores")
       .update({ finished_at: newValue })
@@ -173,6 +219,7 @@ export default function StoreStockEntry() {
     }
     setFinishedAt(newValue);
     setMessage(newValue ? "Marked as finished." : "Reopened for editing.");
+    if (newValue) await loadEntries();
   };
 
   useEffect(() => {
@@ -182,6 +229,7 @@ export default function StoreStockEntry() {
       setStoreItems([]);
       setEntries([]);
       setGridData([]);
+      setPriorEntryItemIds(new Set());
       return;
     }
 
@@ -197,6 +245,7 @@ export default function StoreStockEntry() {
         activeCyclesResponse,
         deliveredCyclesResponse,
         itemsResponse,
+        priorEntriesResponse,
       ] = await Promise.all([
         supabase.from("stores").select("id,name").eq("id", effectiveStoreId).single(),
         supabase
@@ -215,6 +264,11 @@ export default function StoreStockEntry() {
           .select("item_id,is_active,capacity,items(name,sub_category,packaging_type)")
           .eq("store_id", effectiveStoreId)
           .order("item_id"),
+        supabase
+          .from("stock_entries")
+          .select("item_id,order_cycles!inner(status)")
+          .eq("store_id", effectiveStoreId)
+          .eq("order_cycles.status", "delivered"),
       ]);
 
       if (storeResponse.data) {
@@ -229,6 +283,17 @@ export default function StoreStockEntry() {
 
       if (itemsResponse.data) {
         setStoreItems(itemsResponse.data as unknown as StoreItem[]);
+      }
+
+      if (priorEntriesResponse.data) {
+        const ids = new Set<string>(
+          (priorEntriesResponse.data as Array<{ item_id: string }>).map(
+            (e) => e.item_id,
+          ),
+        );
+        setPriorEntryItemIds(ids);
+      } else {
+        setPriorEntryItemIds(new Set());
       }
     };
 
@@ -267,10 +332,29 @@ export default function StoreStockEntry() {
     `store-${effectiveStoreId}-cycle-${selectedCycleId}-entries`,
   );
 
+  // Auto-select the "most recent open cycle". We prefer the cycle whose
+  // order_date is closest to today AND not delivered AND not more than a
+  // year out (so stray test cycles with far-future dates don't trap
+  // employees into entering counts on the wrong cycle).
   useEffect(() => {
-    if (cycles.length > 0 && !selectedCycleId) {
-      setSelectedCycleId(cycles[0].id);
-    }
+    if (cycles.length === 0 || selectedCycleId) return;
+    const oneYearOut = new Date();
+    oneYearOut.setFullYear(oneYearOut.getFullYear() + 1);
+    const now = Date.now();
+    const candidates = cycles
+      .filter((c) => c.status !== "delivered")
+      .filter((c) => {
+        const t = parseLocalDate(c.order_date)?.getTime();
+        return t !== undefined && t <= oneYearOut.getTime();
+      })
+      .sort((a, b) => {
+        // Smallest absolute distance from today wins.
+        const da = Math.abs((parseLocalDate(a.order_date)?.getTime() ?? 0) - now);
+        const db = Math.abs((parseLocalDate(b.order_date)?.getTime() ?? 0) - now);
+        return da - db;
+      });
+    const pick = candidates[0] ?? cycles[0];
+    setSelectedCycleId(pick.id);
   }, [cycles, selectedCycleId]);
 
   useEffect(() => {
@@ -286,6 +370,14 @@ export default function StoreStockEntry() {
         const existingEntry = entries.find(
           entry => entry.cycle_id === selectedCycleId && entry.item_id === storeItem.item_id
         );
+        const sub_category = storeItem.items?.sub_category || null;
+        const isBoxTraced =
+          !!sub_category && BOX_TRACED_CATEGORIES.includes(sub_category);
+        // First cycle ever for this item if no prior delivered cycle has an
+        // entry. Worker needs to do a one-time calibration; after that,
+        // traces handle decrements.
+        const needs_calibration =
+          isBoxTraced && !priorEntryItemIds.has(storeItem.item_id);
 
         return {
           item_id: storeItem.item_id,
@@ -294,8 +386,9 @@ export default function StoreStockEntry() {
           current_count: existingEntry?.current_count || 0,
           is_active: storeItem.is_active,
           has_existing_entry: !!existingEntry,
-          sub_category: storeItem.items?.sub_category || null,
+          sub_category,
           packaging_type: storeItem.items?.packaging_type || null,
+          needs_calibration,
         };
       });
 
@@ -303,7 +396,7 @@ export default function StoreStockEntry() {
     gridRows.sort((a, b) => (a.sub_category || "").localeCompare(b.sub_category || ""));
 
     setGridData(gridRows);
-  }, [selectedCycleId, storeItems, entries, effectiveStoreId]);
+  }, [selectedCycleId, storeItems, entries, effectiveStoreId, priorEntryItemIds]);
 
   const handleCellValueChanged = async (params: any) => {
     if (!selectedCycleId || !effectiveStoreId) return;
@@ -373,13 +466,47 @@ export default function StoreStockEntry() {
       field: "current_count",
       sortable: true,
       filter: true,
-      width: 145,
+      width: 175,
       editable: true,
       cellEditor: "agNumberCellEditor",
       cellEditorParams: { min: 0 },
       cellStyle: (params) => ({
         backgroundColor: params.data?.has_existing_entry ? '#1f2937' : '#374151',
       }),
+      cellRenderer: (params: ICellRendererParams<StockEntryRow>) => {
+        const row = params.data;
+        const value = (params.value as number | undefined) ?? 0;
+        const isAutoTracked =
+          !!row?.sub_category &&
+          BOX_TRACED_CATEGORIES.includes(row.sub_category);
+        if (!isAutoTracked) return <span>{value}</span>;
+        if (row?.needs_calibration) {
+          return (
+            <span className="flex h-full items-center justify-between gap-2 pr-1">
+              <span className="font-medium">{value}</span>
+              <span
+                className="inline-flex items-center gap-1.5 rounded-md bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-300 ring-1 ring-amber-500/30"
+                title="First time tracking this — enter your real count once. After that, it'll update on its own."
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                Calibrate
+              </span>
+            </span>
+          );
+        }
+        return (
+          <span className="flex h-full items-center justify-between gap-2 pr-1">
+            <span className="font-medium">{value}</span>
+            <span
+              className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-300 ring-1 ring-emerald-500/30"
+              title="Updates on its own when you log a box. Only edit to fix it (like a damaged box)."
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              Auto
+            </span>
+          </span>
+        );
+      },
     },
   ];
 
@@ -391,9 +518,15 @@ export default function StoreStockEntry() {
     <section className="rounded-3xl border border-white/10 bg-slate-950/90 p-8 text-slate-100 shadow-lg shadow-slate-950/20">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-semibold text-white">Store Stock Entry</h1>
+          <h1 className="text-3xl font-semibold text-white">Order Sheet</h1>
           <p className="mt-3 text-slate-400">
-            Enter current stock counts and order dates for your store's active items. Use the spreadsheet interface below.
+            Enter your current counts for items without an{" "}
+            <strong className="text-emerald-300">Auto</strong> badge.
+            Auto items update on their own as you log boxes in the Box
+            Trace Log. Items with a{" "}
+            <strong className="text-amber-300">Calibrate</strong>{" "}
+            badge need a real count once — after that, they go on Auto.
+            Click Finish when done.
           </p>
         </div>
         {isSignedIn && (
@@ -411,15 +544,15 @@ export default function StoreStockEntry() {
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
           <p>Please sign in with Supabase Auth first to access this page.</p>
         </div>
-      ) : !isStoreManager && !isHQAdmin ? (
+      ) : !isEmployee && !isStoreManager ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
-          <p>This page is only available to store managers and management.</p>
+          <p>This page is only available to Employees and Store Managers.</p>
         </div>
-      ) : isStoreManager && !hasAssignedStore ? (
+      ) : isEmployee && !hasAssignedStore ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
           <p>You are not assigned to a store. Please contact an administrator.</p>
         </div>
-      ) : isHQAdmin && !selectedStoreId ? (
+      ) : isStoreManager && !selectedStoreId ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300 space-y-3">
           <p>Pick a store to manage:</p>
           <select
@@ -442,7 +575,7 @@ export default function StoreStockEntry() {
               <h2 className="text-xl font-semibold text-white">{store?.name || "Loading..."}</h2>
             </div>
             <div className="flex items-center gap-4">
-              {isHQAdmin && (
+              {isStoreManager && (
                 <>
                   <label htmlFor="store" className="text-sm font-medium text-slate-300">
                     Store:
@@ -472,7 +605,7 @@ export default function StoreStockEntry() {
               >
                 {cycles.map((cycle) => (
                   <option key={cycle.id} value={cycle.id}>
-                    {new Date(cycle.order_date).toLocaleDateString()} ({cycle.status.charAt(0).toUpperCase() + cycle.status.slice(1)})
+                    {formatLocalDate(cycle.order_date)} ({cycle.status.charAt(0).toUpperCase() + cycle.status.slice(1)})
                   </option>
                 ))}
               </select>

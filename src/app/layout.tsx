@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Las Muns Stock Ordering",
-  description: "Multi-store stock ordering web application with Next.js, Supabase, and AG Grid.",
+  title: "Las Muns",
+  description: "Multi-store operations app — stock ordering, daily logs, requests, and reporting.",
   manifest: "/manifest.json",
   applicationName: "Las Muns",
   appleWebApp: {

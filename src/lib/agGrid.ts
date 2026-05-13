@@ -29,9 +29,16 @@ export function AgGridReact<TData>(
     autoHeaderHeight: true,
     ...(props.defaultColDef ?? {}),
   } as AgGridReactProps<TData>["defaultColDef"];
-  return React.createElement(BaseAgGridReact, {
-    theme: lasMunsTheme,
-    ...props,
-    defaultColDef: mergedDefaultColDef,
-  });
+  // BaseAgGridReact's overload narrows TData via inference in a way that
+  // conflicts with passing a defaultColDef typed against the generic. The
+  // runtime payload is identical; cast the props bag to unknown to opt
+  // out of the overload mismatch.
+  return React.createElement(
+    BaseAgGridReact as unknown as React.ComponentType<AgGridReactProps<TData>>,
+    {
+      theme: lasMunsTheme,
+      ...props,
+      defaultColDef: mergedDefaultColDef,
+    },
+  );
 }

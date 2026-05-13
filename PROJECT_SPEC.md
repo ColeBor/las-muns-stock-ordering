@@ -132,9 +132,9 @@ sales_history
 
 ## Roles & Permissions (V1)
 
-- **HQ admin** — full access
-- **Factory user** — enters manufactured stock counts (only for factories they belong to)
-- **Store manager** — enters their own store's stock counts; sees only their store
+- **Store Manager** (`store_manager`) — the boss; full access; manages back-end config.
+- **Employee** (`employee`) — front-line store worker; enters their own store's stock counts, fills daily logs.
+- **Factory Worker** (`factory_worker`) — front-line factory worker; enters manufactured stock counts for their factory.
 
 Enforce with Supabase Row Level Security.
 
@@ -148,7 +148,7 @@ Enforce with Supabase Row Level Security.
 4. **Admin CRUD** — stores, factories, items, suppliers.
 5. **Setup screens** — store-factory priority assignment; store-item activation + capacity (with bulk actions and CSV import).
 6. **Cycle creation** — open a cycle, pick participating stores.
-7. **Stock entry** — store manager view (their store only) and factory view (manufactured stock counts) using AG Grid.
+7. **Stock entry** — Employee view (their store only) and Factory Worker view (manufactured stock counts) using AG Grid.
 8. **Allocation engine** — cascading priority logic with sales% and override support.
 9. **Cycle review** — allocations, shortfalls, override UI, rerun.
 10. **Purchase order generation** — group purchased allocations by supplier; generate POs.
@@ -159,21 +159,21 @@ Enforce with Supabase Row Level Security.
 
 ## Deploying to a fresh environment
 
-When the app is deployed to a brand-new Supabase project, the first user account needs to be promoted to HQ admin manually — there's no admin user yet to assign roles via the UI.
+When the app is deployed to a brand-new Supabase project, the first user account needs to be promoted to Store Manager manually — there's no admin user yet to assign roles via the UI.
 
 1. **Apply migrations.** Run every SQL migration in `supabase/migrations/` in chronological order through the Supabase SQL editor.
-2. **Sign up your account** via the regular auth UI on the homepage (email + password). The `handle_new_user` trigger creates a profile row with the default role of `store_manager`.
+2. **Sign up your account** via the regular auth UI on the homepage (email + password). The `handle_new_user` trigger creates a profile row with the default role of `employee`.
 3. **Look up your auth user UUID** in the SQL editor:
    ```sql
    select id, email from auth.users where email = 'you@example.com';
    ```
-4. **Promote the profile to hq_admin:**
+4. **Promote the profile to store_manager:**
    ```sql
-   update public.profiles set role = 'hq_admin' where id = '<auth-user-uuid>';
+   update public.profiles set role = 'store_manager' where id = '<auth-user-uuid>';
    ```
 5. **Sign out and back in** so the new role takes effect on the client.
 
-From that point on, all subsequent admin promotions / role changes happen through the HQ assignment center on the home page. You only need this manual step on the very first install.
+From that point on, all subsequent role changes happen through the Role & Assignment Center on the home page. You only need this manual step on the very first install.
 
 ---
 

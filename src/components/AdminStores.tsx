@@ -42,8 +42,8 @@ export default function AdminStores({
   const [activeTab, setActiveTab] = useState<TabKey>("details");
 
   const isSignedIn = useMemo(() => !!session?.user, [session]);
-  const isHQAdmin = useMemo(() => profile?.role === "hq_admin", [profile]);
-  const canManage = isHQAdmin;
+  const isStoreManager = useMemo(() => profile?.role === "store_manager", [profile]);
+  const canManage = isStoreManager;
 
   useEffect(() => {
     const loadSession = async () => {
@@ -186,7 +186,7 @@ export default function AdminStores({
         <>
           <h1 className="text-3xl font-semibold text-white">Admin: Stores</h1>
           <p className="mt-3 text-slate-400">
-            Manage stores, the items each store carries, and which factories ship to it.
+            Add stores, choose what they carry, and set which factories ship to them.
           </p>
         </>
       )}
@@ -195,9 +195,9 @@ export default function AdminStores({
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
           <p>Please sign in to access this page.</p>
         </div>
-      ) : !isHQAdmin ? (
+      ) : !isStoreManager ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
-          <p>This page is only available to HQ administrators.</p>
+          <p>This page is only available to Store Managers.</p>
         </div>
       ) : (
         <div className="mt-8 space-y-6">
@@ -526,7 +526,8 @@ function StoreItemsTab({ storeId }: { storeId: string }) {
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <p className="text-sm text-slate-400">
-          Toggle items active for this store and set per-item capacity.
+          Pick which items this store sells and set each one&apos;s full
+          capacity (how many they hold when fully stocked).
         </p>
         <button
           onClick={activateAll}
@@ -696,7 +697,7 @@ function StoreFactoriesTab({ storeId }: { storeId: string }) {
   return (
     <div className="space-y-4">
       <p className="text-sm text-slate-400">
-        Lower priority numbers ship first (1 = primary).
+        Order which factory ships first when multiple can supply this store.
       </p>
 
       <div className="flex items-center gap-2 rounded-2xl bg-slate-950/60 p-4">

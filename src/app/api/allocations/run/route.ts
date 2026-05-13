@@ -10,6 +10,12 @@ type StockEntry = {
   current_count: number;
 };
 
+type StoreItem = {
+  store_id: string;
+  item_id: string;
+  capacity: number;
+};
+
 type Item = {
   id: string;
   type: "manufactured" | "purchased";
@@ -34,6 +40,7 @@ type Override = {
   store_id: string;
   item_id: string;
   qty: number;
+  mode: "soft" | "hard";
 };
 
 type CycleStore = {
@@ -48,6 +55,9 @@ type AllocationRow = {
   source: "factory" | "purchase" | "manual_override";
   factory_id: string | null;
   shortfall: number;
+  // Amount forced past available factory stock by a hard override.
+  // Soft overrides + normal allocations are always 0.
+  overdraft: number;
 };
 
 type FactorySplit = {
@@ -103,7 +113,7 @@ export async function POST(request: NextRequest) {
   if (csErr) {
     return NextResponse.json({ error: csErr.message }, { status: 500 });
   }
-  const unfinished = (cycleStoresRows ?? []).filter((cs) => !cs.finished_at) as Array<{
+  const unfinished = (cycleStoresRows ?? []).filter((cs) => !cs.finished_at) as unknown as Array<{
     store_id: string;
     finished_at: string | null;
     stores: { name: string } | null;
@@ -128,12 +138,16 @@ export async function POST(request: NextRequest) {
     itemsRes,
     cycleStoresRes,
     storesRes,
+    storeItemsRes,
+    factoriesRes,
   ] = await Promise.all([
+    // current_count is on-hand inventory. We pull all entries (including
+    // current_count = 0) because a store with 0 on-hand needs the full
+    // capacity — demand is computed below as capacity - current_count.
     supabaseAdmin
       .from("stock_entries")
       .select("cycle_id,store_id,item_id,current_count")
-      .eq("cycle_id", cycle_id)
-      .gt("current_count", 0),
+      .eq("cycle_id", cycle_id),
     supabaseAdmin
       .from("factory_counts")
       .select("cycle_id,factory_id,item_id,available_qty")
@@ -143,7 +157,7 @@ export async function POST(request: NextRequest) {
       .select("store_id,factory_id,priority"),
     supabaseAdmin
       .from("allocation_overrides")
-      .select("cycle_id,store_id,item_id,qty")
+      .select("cycle_id,store_id,item_id,qty,mode")
       .eq("cycle_id", cycle_id),
     supabaseAdmin
       .from("items")
@@ -153,6 +167,11 @@ export async function POST(request: NextRequest) {
       .select("store_id")
       .eq("cycle_id", cycle_id),
     supabaseAdmin.from("stores").select("id,tier"),
+    supabaseAdmin
+      .from("store_items")
+      .select("store_id,item_id,capacity")
+      .eq("is_active", true),
+    supabaseAdmin.from("factories").select("id,name"),
   ]);
 
   for (const res of [
@@ -163,6 +182,8 @@ export async function POST(request: NextRequest) {
     itemsRes,
     cycleStoresRes,
     storesRes,
+    storeItemsRes,
+    factoriesRes,
   ]) {
     if (res.error) {
       return NextResponse.json({ error: res.error.message }, { status: 500 });
@@ -176,6 +197,11 @@ export async function POST(request: NextRequest) {
   const items = (itemsRes.data ?? []) as Item[];
   const cycleStores = (cycleStoresRes.data ?? []) as CycleStore[];
   const stores = (storesRes.data ?? []) as Array<{ id: string; tier: number }>;
+  const storeItems = (storeItemsRes.data ?? []) as StoreItem[];
+  const capacityByKey = new Map<string, number>();
+  for (const si of storeItems) {
+    capacityByKey.set(tupleKey(si.store_id, si.item_id), si.capacity);
+  }
   const tierByStore = new Map(stores.map((s) => [s.id, s.tier]));
   const tierOf = (storeId: string) => tierByStore.get(storeId) ?? 999;
 
@@ -183,6 +209,40 @@ export async function POST(request: NextRequest) {
   // Empty cycle_stores means nobody is in the cycle — no allocations get
   // produced even if stock_entries or overrides exist for other stores.
   const allowedStoreIds = new Set(cycleStores.map((c) => c.store_id));
+
+  // Every factory that any participating store routes to must have entered
+  // at least one factory_count row for this cycle. Without counts we'd
+  // assume 0 stock and report bogus shortfalls for every manufactured
+  // item, so block the run with a clear message naming the laggards.
+  const participatingFactoryIds = new Set<string>();
+  for (const sf of storeFactories) {
+    if (allowedStoreIds.has(sf.store_id)) {
+      participatingFactoryIds.add(sf.factory_id);
+    }
+  }
+  const factoriesWithCounts = new Set(
+    factoryCounts.map((fc) => fc.factory_id),
+  );
+  const missingFactoryIds = [...participatingFactoryIds].filter(
+    (id) => !factoriesWithCounts.has(id),
+  );
+  if (missingFactoryIds.length > 0) {
+    const factoryNameById = new Map(
+      (factoriesRes.data ?? []).map((f: { id: string; name: string }) => [
+        f.id,
+        f.name,
+      ]),
+    );
+    const names = missingFactoryIds
+      .map((id) => factoryNameById.get(id) ?? id)
+      .sort();
+    return NextResponse.json(
+      {
+        error: `Waiting on ${names.length} ${names.length === 1 ? "factory" : "factories"} to enter counts: ${names.join(", ")}`,
+      },
+      { status: 400 },
+    );
+  }
 
   // Wipe existing allocations for the cycle. allocation_factories has FK with cascade,
   // so deleting allocations removes its per-factory rows too.
@@ -254,6 +314,11 @@ export async function POST(request: NextRequest) {
     fulfilled: number;
     primaryFactoryId: string | null;
     source: AllocationRow["source"];
+    // 'hard' overrides ignore factory availability and are force-fulfilled
+    // in phase 3 (factory stock may go negative).
+    overrideMode: Override["mode"] | null;
+    // How much phase 3 had to force past available stock.
+    overdraft: number;
   };
   const manufacturedStates = new Map<string, ManufacturedState>();
 
@@ -262,9 +327,17 @@ export async function POST(request: NextRequest) {
     const stock = stockEntryByKey.get(key);
     const override = overrideByKey.get(key);
 
-    // Override qty replaces the stock-entry qty as the "needed" amount.
-    // Allocation still runs through factories / POs; source records who set the qty.
-    const needed = override ? override.qty : stock!.current_count;
+    // Demand = capacity - on-hand. The store enters current_count (what
+    // they have); we pull up to their per-item capacity (par level). A
+    // hard/soft override replaces this calculation entirely — overrides
+    // are an absolute qty, not a delta.
+    let needed: number;
+    if (override) {
+      needed = override.qty;
+    } else {
+      const capacity = capacityByKey.get(key) ?? 0;
+      needed = Math.max(0, capacity - stock!.current_count);
+    }
     if (needed <= 0) continue;
 
     const item = itemsById.get(item_id);
@@ -284,6 +357,8 @@ export async function POST(request: NextRequest) {
         fulfilled: 0,
         primaryFactoryId: null,
         source: baseSource,
+        overrideMode: override?.mode ?? null,
+        overdraft: 0,
       });
     } else if (item.type === "purchased") {
       allocationRows.push({
@@ -294,6 +369,7 @@ export async function POST(request: NextRequest) {
         source: baseSource,
         factory_id: null,
         shortfall: 0,
+        overdraft: 0,
       });
 
       if (item.supplier_id) {
@@ -324,12 +400,6 @@ export async function POST(request: NextRequest) {
     0,
   );
 
-  type ManufacturedState = (typeof manufacturedStates) extends Map<
-    string,
-    infer V
-  >
-    ? V
-    : never;
   const allocateOne = (state: ManufacturedState, sf: StoreFactory, want: number) => {
     if (want <= 0) return 0;
     const k = availableKey(sf.factory_id, state.item_id);
@@ -387,6 +457,33 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Phase 3 (hard overrides only): force-fulfill any remaining demand. We
+  // pick a target factory (primary if any pull happened, otherwise the
+  // store's highest-priority factory) and push a synthetic split for the
+  // deficit. availableMap may go negative — that's the point: the factory
+  // owns the deficit, not the store.
+  for (const state of manufacturedStates.values()) {
+    if (state.overrideMode !== "hard") continue;
+    const remaining = state.needed - state.fulfilled;
+    if (remaining <= 0) continue;
+    const chain = sfByStore.get(state.store_id) ?? [];
+    const targetFactoryId = state.primaryFactoryId ?? chain[0]?.factory_id ?? null;
+    if (targetFactoryId) {
+      const k = availableKey(targetFactoryId, state.item_id);
+      availableMap.set(k, (availableMap.get(k) ?? 0) - remaining);
+      factorySplits.push({
+        cycle_id: cycle_id!,
+        store_id: state.store_id,
+        item_id: state.item_id,
+        factory_id: targetFactoryId,
+        qty: remaining,
+      });
+      if (state.primaryFactoryId === null) state.primaryFactoryId = targetFactoryId;
+    }
+    state.overdraft = remaining;
+    state.fulfilled = state.needed;
+  }
+
   for (const state of manufacturedStates.values()) {
     allocationRows.push({
       cycle_id: cycle_id!,
@@ -396,6 +493,7 @@ export async function POST(request: NextRequest) {
       source: state.source,
       factory_id: state.primaryFactoryId,
       shortfall: state.needed - state.fulfilled,
+      overdraft: state.overdraft,
     });
   }
 

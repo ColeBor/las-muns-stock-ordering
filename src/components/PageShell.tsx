@@ -1,6 +1,5 @@
-import Link from "next/link";
 import type { ReactNode } from "react";
-import BackButton from "./BackButton";
+import PageShellNav from "./PageShellNav";
 
 export default function PageShell({ children, wide = false }: { children: ReactNode; wide?: boolean }) {
   return (
@@ -10,15 +9,7 @@ export default function PageShell({ children, wide = false }: { children: ReactN
           wide ? "max-w-[100rem]" : "max-w-6xl"
         }`}
       >
-        <nav className="mb-6 flex items-center gap-2">
-          <BackButton />
-          <Link
-            href="/"
-            className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-slate-900/60 px-4 py-2 text-sm font-medium text-slate-300 transition hover:border-cyan-300 hover:text-cyan-300"
-          >
-            <span aria-hidden>⌂</span> Home
-          </Link>
-        </nav>
+        <PageShellNav />
         {children}
       </div>
     </main>

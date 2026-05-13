@@ -36,8 +36,8 @@ export default function AdminSuppliers({
   const [loading, setLoading] = useState(false);
 
   const isSignedIn = useMemo(() => !!session?.user, [session]);
-  const isHQAdmin = useMemo(() => profile?.role === "hq_admin", [profile]);
-  const canManage = isHQAdmin;
+  const isStoreManager = useMemo(() => profile?.role === "store_manager", [profile]);
+  const canManage = isStoreManager;
 
   useEffect(() => {
     const loadSession = async () => {
@@ -206,7 +206,7 @@ export default function AdminSuppliers({
         <>
           <h1 className="text-3xl font-semibold text-white">Admin: Manage Suppliers</h1>
           <p className="mt-3 text-slate-400">
-            HQ administrators can create, edit, and delete suppliers.
+            Add, edit, or remove suppliers.
           </p>
         </>
       )}
@@ -215,9 +215,9 @@ export default function AdminSuppliers({
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
           <p>Please sign in with Supabase Auth first to access this page.</p>
         </div>
-      ) : !isHQAdmin ? (
+      ) : !isStoreManager ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
-          <p>This page is only available to HQ administrators.</p>
+          <p>This page is only available to Store Managers.</p>
         </div>
       ) : (
         <div className="mt-8 space-y-6">

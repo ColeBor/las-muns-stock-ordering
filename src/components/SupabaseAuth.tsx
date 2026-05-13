@@ -13,10 +13,18 @@ type Profile = {
   factory_id: string | null;
 };
 
+// Resolved labels (store / factory name) for the currently-signed-in user,
+// fetched separately so we can display "Store: Bramalea" instead of the raw
+// UUID. Looked up only when profile.store_id / factory_id is non-null.
+type AssignmentLabels = {
+  storeName: string | null;
+  factoryName: string | null;
+};
+
 const ROLE_LABEL: Record<string, string> = {
-  hq_admin: "Store Manager",
-  store_manager: "Employee",
-  factory_user: "Factory Worker",
+  store_manager: "Store Manager",
+  employee: "Employee",
+  factory_worker: "Factory Worker",
 };
 const formatRole = (role: string | null | undefined) =>
   role ? (ROLE_LABEL[role] ?? role) : "Not assigned";
@@ -35,6 +43,10 @@ export default function SupabaseAuth() {
   const [session, setSession] = useState<Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"] | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [assignmentLabels, setAssignmentLabels] = useState<AssignmentLabels>({
+    storeName: null,
+    factoryName: null,
+  });
   const [allProfiles, setAllProfiles] = useState<Profile[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
   const [factories, setFactories] = useState<Factory[]>([]);
@@ -91,11 +103,42 @@ export default function SupabaseAuth() {
     loadProfile();
   }, [session]);
 
+  // Resolve store / factory names for the current user. Employees and
+  // Factory Workers only see their own; Store Managers see whichever store
+  // or factory they happen to have assigned (often none, since the role
+  // doesn't require an assignment).
+  useEffect(() => {
+    let alive = true;
+    const resolve = async () => {
+      if (!profile?.store_id && !profile?.factory_id) {
+        if (alive) setAssignmentLabels({ storeName: null, factoryName: null });
+        return;
+      }
+      const [storeRes, factoryRes] = await Promise.all([
+        profile.store_id
+          ? supabase.from("stores").select("name").eq("id", profile.store_id).maybeSingle()
+          : Promise.resolve({ data: null, error: null }),
+        profile.factory_id
+          ? supabase.from("factories").select("name").eq("id", profile.factory_id).maybeSingle()
+          : Promise.resolve({ data: null, error: null }),
+      ]);
+      if (!alive) return;
+      setAssignmentLabels({
+        storeName: (storeRes.data as { name: string } | null)?.name ?? null,
+        factoryName: (factoryRes.data as { name: string } | null)?.name ?? null,
+      });
+    };
+    resolve();
+    return () => {
+      alive = false;
+    };
+  }, [profile?.store_id, profile?.factory_id]);
+
   const isSignedIn = useMemo(() => !!session?.user, [session]);
-  const isHQAdmin = useMemo(() => profile?.role === "hq_admin", [profile]);
+  const isStoreManager = useMemo(() => profile?.role === "store_manager", [profile]);
 
   useEffect(() => {
-    if (!isHQAdmin) {
+    if (!isStoreManager) {
       setAllProfiles([]);
       setStores([]);
       setFactories([]);
@@ -123,7 +166,7 @@ export default function SupabaseAuth() {
     };
 
     loadAdminData();
-  }, [isHQAdmin]);
+  }, [isStoreManager]);
 
   const signInWithPassword = async (event: FormEvent) => {
     event.preventDefault();
@@ -209,8 +252,8 @@ export default function SupabaseAuth() {
             <p className="text-white">{session?.user?.email ?? session?.user?.id}</p>
             <p className="mt-2 text-slate-400">
               Role: {formatRole(profile?.role)}
-              {profile?.store_id ? ` · Store ID: ${profile.store_id}` : ""}
-              {profile?.factory_id ? ` · Factory ID: ${profile.factory_id}` : ""}
+              {assignmentLabels.storeName ? ` · Store: ${assignmentLabels.storeName}` : ""}
+              {assignmentLabels.factoryName ? ` · Factory: ${assignmentLabels.factoryName}` : ""}
             </p>
           </div>
 
@@ -223,11 +266,11 @@ export default function SupabaseAuth() {
             Sign out
           </button>
 
-          {isHQAdmin ? (
+          {isStoreManager ? (
             <section className="rounded-3xl border border-cyan-500/20 bg-slate-900/90 p-6 text-sm text-slate-300">
-              <h3 className="text-lg font-semibold text-white">HQ assignment center</h3>
+              <h3 className="text-lg font-semibold text-white">Role &amp; Assignment Center</h3>
               <p className="mt-2 text-slate-400">
-                Assign store managers to stores and update roles for non-administrative profiles.
+                Assign Employees to stores and update roles for non-Store-Manager profiles.
               </p>
 
               <div className="mt-4 space-y-4">
@@ -312,28 +355,28 @@ export default function SupabaseAuth() {
                               Role
                             </label>
                             <select
-                              value={userProfile.role ?? "store_manager"}
+                              value={userProfile.role ?? "employee"}
                               onChange={(event) =>
                                 updateProfile(userProfile.id, {
                                   role: event.target.value,
                                   store_id:
-                                    event.target.value === "store_manager"
+                                    event.target.value === "employee"
                                       ? userProfile.store_id
                                       : null,
                                   factory_id:
-                                    event.target.value === "factory_user"
+                                    event.target.value === "factory_worker"
                                       ? userProfile.factory_id
                                       : null,
                                 })
                               }
                               className="rounded-full border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none"
                             >
-                              <option value="hq_admin">Store Manager</option>
-                              <option value="store_manager">Employee</option>
-                              <option value="factory_user">Factory Worker</option>
+                              <option value="store_manager">Store Manager</option>
+                              <option value="employee">Employee</option>
+                              <option value="factory_worker">Factory Worker</option>
                             </select>
 
-                            {userProfile.role === "store_manager" && (
+                            {userProfile.role === "employee" && (
                               <>
                                 <label className="block text-xs font-medium text-slate-400">
                                   Assigned store
@@ -357,7 +400,7 @@ export default function SupabaseAuth() {
                               </>
                             )}
 
-                            {userProfile.role === "factory_user" && (
+                            {userProfile.role === "factory_worker" && (
                               <>
                                 <label className="block text-xs font-medium text-slate-400">
                                   Assigned factory

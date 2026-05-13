@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { formatLocalDate } from "@/lib/dateOnly";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
 import { AgGridReact } from "@/lib/agGrid";
 import type { ColDef } from "ag-grid-community";
@@ -50,6 +51,18 @@ type AllocationFactory = {
   factory_id: string;
 };
 
+// Items the factory needs to produce more of for the selected cycle.
+// Urgent = a hard override forced an allocation past available stock; the
+// store will receive the full qty regardless, so the factory has to make
+// it up. Short = a regular shortfall (factory ran out, store got less
+// than asked) — secondary signal that demand exceeded supply.
+type ProductionAlert = {
+  item_id: string;
+  item_name: string;
+  urgent_qty: number;
+  short_qty: number;
+};
+
 type FactoryCountRow = {
   item_id: string;
   item_name: string;
@@ -73,21 +86,22 @@ export default function FactoryStock() {
   const [cycles, setCycles] = useState<OrderCycle[]>([]);
   const [counts, setCounts] = useState<FactoryCount[]>([]);
   const [allocations, setAllocations] = useState<AllocationFactory[]>([]);
+  const [productionAlerts, setProductionAlerts] = useState<ProductionAlert[]>([]);
   const [selectedCycleId, setSelectedCycleId] = useState("");
   const [gridData, setGridData] = useState<FactoryCountRow[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const isSignedIn = useMemo(() => !!session?.user, [session]);
-  const isHQAdmin = useMemo(() => profile?.role === "hq_admin", [profile]);
-  const isFactoryUser = useMemo(() => profile?.role === "factory_user", [profile]);
+  const isStoreManager = useMemo(() => profile?.role === "store_manager", [profile]);
+  const isFactoryWorker = useMemo(() => profile?.role === "factory_worker", [profile]);
   const hasAssignedFactory = useMemo(() => !!profile?.factory_id, [profile]);
   const effectiveFactoryId = useMemo(
-    () => (isHQAdmin ? selectedFactoryId || null : profile?.factory_id ?? null),
-    [isHQAdmin, selectedFactoryId, profile?.factory_id],
+    () => (isStoreManager ? selectedFactoryId || null : profile?.factory_id ?? null),
+    [isStoreManager, selectedFactoryId, profile?.factory_id],
   );
   const isMasterView = effectiveFactoryId === MASTER_FACTORY;
-  const canManage = (isFactoryUser && hasAssignedFactory) || (isHQAdmin && !!effectiveFactoryId);
+  const canManage = (isFactoryWorker && hasAssignedFactory) || (isStoreManager && !!effectiveFactoryId);
   const canEdit = canManage && !isMasterView;
 
   useEffect(() => {
@@ -132,13 +146,13 @@ export default function FactoryStock() {
   }, [session]);
 
   useEffect(() => {
-    if (!isHQAdmin) return;
+    if (!isStoreManager) return;
     const loadFactories = async () => {
       const { data } = await supabase.from("factories").select("id,name").order("name");
       if (data) setAllFactories(data as Factory[]);
     };
     loadFactories();
-  }, [isHQAdmin]);
+  }, [isStoreManager]);
 
   useEffect(() => {
     if (!canManage || !effectiveFactoryId) {
@@ -202,6 +216,7 @@ export default function FactoryStock() {
     if (!canManage || !effectiveFactoryId || !selectedCycleId) {
       setCounts([]);
       setAllocations([]);
+      setProductionAlerts([]);
       return;
     }
     const countsQuery = supabase
@@ -214,19 +229,62 @@ export default function FactoryStock() {
       .from("allocation_factories")
       .select("cycle_id,store_id,item_id,qty,factory_id")
       .eq("cycle_id", selectedCycleId);
+    // Production alerts come from the top-level allocations table since
+    // overdraft and shortfall live there (allocation_factories only has
+    // the per-factory split qty). Skip in master view — there's no
+    // single factory to alert.
+    const alertsQuery = !isMasterView
+      ? supabase
+          .from("allocations")
+          .select("item_id,overdraft,shortfall,items(name)")
+          .eq("cycle_id", selectedCycleId)
+          .eq("factory_id", effectiveFactoryId)
+      : null;
     if (!isMasterView) {
       countsQuery.eq("factory_id", effectiveFactoryId);
       allocationsQuery.eq("factory_id", effectiveFactoryId);
     }
-    const [countsResponse, allocationsResponse] = await Promise.all([
-      countsQuery,
-      allocationsQuery,
-    ]);
+    const [countsResponse, allocationsResponse, alertsResponse] =
+      await Promise.all([
+        countsQuery,
+        allocationsQuery,
+        alertsQuery ?? Promise.resolve({ data: null }),
+      ]);
     if (countsResponse.data) {
       setCounts(countsResponse.data as unknown as FactoryCount[]);
     }
     if (allocationsResponse.data) {
       setAllocations(allocationsResponse.data as AllocationFactory[]);
+    }
+    if (alertsResponse.data) {
+      const byItem = new Map<string, ProductionAlert>();
+      for (const a of alertsResponse.data as unknown as Array<{
+        item_id: string;
+        overdraft: number | null;
+        shortfall: number | null;
+        items: { name: string } | null;
+      }>) {
+        const existing =
+          byItem.get(a.item_id) ?? {
+            item_id: a.item_id,
+            item_name: a.items?.name ?? a.item_id,
+            urgent_qty: 0,
+            short_qty: 0,
+          };
+        existing.urgent_qty += a.overdraft ?? 0;
+        existing.short_qty += a.shortfall ?? 0;
+        byItem.set(a.item_id, existing);
+      }
+      const alerts = Array.from(byItem.values()).filter(
+        (a) => a.urgent_qty > 0 || a.short_qty > 0,
+      );
+      alerts.sort((a, b) => {
+        if (a.urgent_qty !== b.urgent_qty) return b.urgent_qty - a.urgent_qty;
+        return b.short_qty - a.short_qty;
+      });
+      setProductionAlerts(alerts);
+    } else {
+      setProductionAlerts([]);
     }
   }, [canManage, effectiveFactoryId, isMasterView, selectedCycleId]);
 
@@ -239,6 +297,7 @@ export default function FactoryStock() {
       ? [
           { table: "factory_counts", filter: `cycle_id=eq.${selectedCycleId}` },
           { table: "allocation_factories", filter: `cycle_id=eq.${selectedCycleId}` },
+          { table: "allocations", filter: `cycle_id=eq.${selectedCycleId}` },
         ]
       : [],
     loadCycleScoped,
@@ -413,22 +472,22 @@ export default function FactoryStock() {
     <section className="rounded-3xl border border-white/10 bg-slate-950/90 p-8 text-slate-100 shadow-lg shadow-slate-950/20">
       <h1 className="text-3xl font-semibold text-white">Factory Stock Management</h1>
       <p className="mt-3 text-slate-400">
-        Enter available stock quantities for manufactured items. See allocations and remaining stock levels.
+        Enter how much of each item you have. See what&apos;s been allocated and what&apos;s left.
       </p>
 
       {!isSignedIn ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
           <p>Please sign in with Supabase Auth first to access this page.</p>
         </div>
-      ) : !isFactoryUser && !isHQAdmin ? (
+      ) : !isFactoryWorker && !isStoreManager ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
-          <p>This page is only available to factory users and management.</p>
+          <p>This page is only available to Factory Workers and Store Managers.</p>
         </div>
-      ) : isFactoryUser && !hasAssignedFactory ? (
+      ) : isFactoryWorker && !hasAssignedFactory ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
           <p>You are not assigned to a factory. Please contact an administrator.</p>
         </div>
-      ) : isHQAdmin && !selectedFactoryId ? (
+      ) : isStoreManager && !selectedFactoryId ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300 space-y-3">
           <p>Pick a factory to manage:</p>
           <select
@@ -452,12 +511,12 @@ export default function FactoryStock() {
               <h2 className="text-xl font-semibold text-white">{factory?.name || "Loading..."}</h2>
               <p className="text-sm text-slate-400">
                 {isMasterView
-                  ? "Aggregated stock across every factory — read-only"
+                  ? "Total stock across all factories. View only."
                   : "Factory Manager Dashboard"}
               </p>
             </div>
             <div className="flex items-center gap-4">
-              {isHQAdmin && (
+              {isStoreManager && (
                 <>
                   <label htmlFor="factory" className="text-sm font-medium text-slate-300">
                     Factory:
@@ -488,7 +547,7 @@ export default function FactoryStock() {
               >
                 {cycles.map((cycle) => (
                   <option key={cycle.id} value={cycle.id}>
-                    {new Date(cycle.order_date).toLocaleDateString()} ({cycle.status.charAt(0).toUpperCase() + cycle.status.slice(1)})
+                    {formatLocalDate(cycle.order_date)} ({cycle.status.charAt(0).toUpperCase() + cycle.status.slice(1)})
                   </option>
                 ))}
               </select>
@@ -496,6 +555,57 @@ export default function FactoryStock() {
           </div>
 
           {message && <p className="text-sm text-cyan-300">{message}</p>}
+
+          {!isMasterView && productionAlerts.length > 0 && (() => {
+            const urgent = productionAlerts.filter((a) => a.urgent_qty > 0);
+            const short = productionAlerts.filter(
+              (a) => a.urgent_qty === 0 && a.short_qty > 0,
+            );
+            return (
+              <div className="space-y-3">
+                {urgent.length > 0 && (
+                  <div className="rounded-2xl bg-rose-950/60 border border-rose-500/40 px-4 py-3 text-sm">
+                    <div className="font-semibold text-rose-200 mb-2">
+                      Bake more — these were forced past your stock
+                    </div>
+                    <ul className="space-y-1 text-rose-100">
+                      {urgent.map((a) => (
+                        <li key={a.item_id} className="flex items-baseline gap-2">
+                          <span className="font-medium">{a.item_name}</span>
+                          <span className="text-rose-200">
+                            need <strong>{a.urgent_qty}</strong> more
+                            {a.short_qty > 0 ? (
+                              <span className="text-rose-200/70">
+                                {" "}
+                                (+{a.short_qty} short)
+                              </span>
+                            ) : null}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {short.length > 0 && (
+                  <div className="rounded-2xl bg-amber-950/60 border border-amber-500/30 px-4 py-3 text-sm">
+                    <div className="font-semibold text-amber-200 mb-2">
+                      Stores were short on these (lower priority)
+                    </div>
+                    <ul className="space-y-1 text-amber-100">
+                      {short.map((a) => (
+                        <li key={a.item_id} className="flex items-baseline gap-2">
+                          <span className="font-medium">{a.item_name}</span>
+                          <span className="text-amber-200">
+                            short by <strong>{a.short_qty}</strong>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           <div style={{ height: "calc(100vh - 300px)", minHeight: 500 }}>
             <AgGridReact

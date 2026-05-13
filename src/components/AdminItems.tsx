@@ -25,6 +25,9 @@ type Item = {
   supplier_id: string | null;
   sub_category: string | null;
   packaging_type: string | null;
+  is_serveable: boolean;
+  cost_per_unit: number | null;
+  retail_price_per_unit: number | null;
   created_at: string;
   suppliers?: { name: string };
 };
@@ -44,12 +47,15 @@ export default function AdminItems() {
   const [supplierId, setSupplierId] = useState("");
   const [subCategory, setSubCategory] = useState("");
   const [packagingType, setPackagingType] = useState("");
+  const [isServeable, setIsServeable] = useState(false);
+  const [costPerUnit, setCostPerUnit] = useState<string>("");
+  const [retailPricePerUnit, setRetailPricePerUnit] = useState<string>("");
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const isSignedIn = useMemo(() => !!session?.user, [session]);
-  const isHQAdmin = useMemo(() => profile?.role === "hq_admin", [profile]);
-  const canManage = isHQAdmin;
+  const isStoreManager = useMemo(() => profile?.role === "store_manager", [profile]);
+  const canManage = isStoreManager;
 
   useEffect(() => {
     const loadSession = async () => {
@@ -109,6 +115,9 @@ export default function AdminItems() {
     setSupplierId("");
     setSubCategory("");
     setPackagingType("");
+    setIsServeable(false);
+    setCostPerUnit("");
+    setRetailPricePerUnit("");
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -117,12 +126,28 @@ export default function AdminItems() {
     setLoading(true);
     setMessage(null);
 
+    const parseMoney = (raw: string): number | null => {
+      const trimmed = raw.trim();
+      if (trimmed === "") return null;
+      const n = Number(trimmed);
+      return Number.isFinite(n) && n >= 0 ? n : NaN;
+    };
+    const cost = parseMoney(costPerUnit);
+    const retail = parseMoney(retailPricePerUnit);
+    if (Number.isNaN(cost) || Number.isNaN(retail)) {
+      setMessage("Cost and retail must be non-negative numbers (or blank).");
+      setLoading(false);
+      return;
+    }
     const payload = {
       name: name.trim(),
       type,
       supplier_id: supplierId || null,
       sub_category: subCategory || null,
       packaging_type: packagingType || null,
+      is_serveable: isServeable,
+      cost_per_unit: cost,
+      retail_price_per_unit: retail,
     };
 
     const { error } = editingItem
@@ -149,7 +174,27 @@ export default function AdminItems() {
     setSupplierId(item.supplier_id || "");
     setSubCategory(item.sub_category || "");
     setPackagingType(item.packaging_type || "");
+    setIsServeable(!!item.is_serveable);
+    setCostPerUnit(item.cost_per_unit === null ? "" : String(item.cost_per_unit));
+    setRetailPricePerUnit(
+      item.retail_price_per_unit === null ? "" : String(item.retail_price_per_unit),
+    );
     setShowForm(true);
+  };
+
+  const toggleServeable = async (item: Item) => {
+    const next = !item.is_serveable;
+    const { error } = await supabase
+      .from("items")
+      .update({ is_serveable: next })
+      .eq("id", item.id);
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+    setItems((prev) =>
+      prev.map((i) => (i.id === item.id ? { ...i, is_serveable: next } : i)),
+    );
   };
 
   const handleDelete = async (item: Item) => {
@@ -283,11 +328,30 @@ export default function AdminItems() {
   }) => {
     if (params.newValue === params.oldValue) return;
     const field = params.colDef.field;
-    if (!field || !["sub_category", "packaging_type"].includes(field)) return;
+    if (!field) return;
+    const allowed = ["sub_category", "packaging_type", "cost_per_unit", "retail_price_per_unit"];
+    if (!allowed.includes(field)) return;
+
+    let normalized: string | number | null = params.newValue as string | number | null;
+    if (field === "cost_per_unit" || field === "retail_price_per_unit") {
+      if (params.newValue === "" || params.newValue === null || params.newValue === undefined) {
+        normalized = null;
+      } else {
+        const n = Number(params.newValue);
+        if (!Number.isFinite(n) || n < 0) {
+          setMessage("Must be a non-negative number.");
+          params.node.setDataValue(field, params.oldValue);
+          return;
+        }
+        normalized = n;
+      }
+    } else {
+      normalized = (params.newValue as string) || null;
+    }
 
     const { error } = await supabase
       .from("items")
-      .update({ [field]: params.newValue || null })
+      .update({ [field]: normalized })
       .eq("id", params.data.id);
 
     if (error) {
@@ -297,7 +361,7 @@ export default function AdminItems() {
     }
     setMessage(`Updated ${field}.`);
     setItems((prev) =>
-      prev.map((i) => (i.id === params.data.id ? { ...i, [field]: params.newValue as string | null } : i)),
+      prev.map((i) => (i.id === params.data.id ? { ...i, [field]: normalized } : i)),
     );
   };
 
@@ -345,6 +409,55 @@ export default function AdminItems() {
       cellEditorParams: { values: ["", ...PACKAGING_TYPES] },
     },
     {
+      headerName: "Cost",
+      field: "cost_per_unit",
+      sortable: true,
+      filter: true,
+      width: 100,
+      editable: true,
+      cellEditor: "agNumberCellEditor",
+      cellEditorParams: { min: 0, precision: 2 },
+      valueFormatter: (p) =>
+        p.value === null || p.value === undefined || p.value === ""
+          ? ""
+          : `$${Number(p.value).toFixed(2)}`,
+    },
+    {
+      headerName: "Retail",
+      field: "retail_price_per_unit",
+      sortable: true,
+      filter: true,
+      width: 100,
+      editable: true,
+      cellEditor: "agNumberCellEditor",
+      cellEditorParams: { min: 0, precision: 2 },
+      valueFormatter: (p) =>
+        p.value === null || p.value === undefined || p.value === ""
+          ? ""
+          : `$${Number(p.value).toFixed(2)}`,
+    },
+    {
+      headerName: "Serveable",
+      field: "is_serveable",
+      sortable: true,
+      filter: true,
+      width: 120,
+      cellRenderer: (params: { data: Item }) => (
+        <button
+          type="button"
+          onClick={() => toggleServeable(params.data)}
+          className={`rounded-full px-3 py-1 text-xs font-semibold ${
+            params.data.is_serveable
+              ? "bg-emerald-500 text-slate-950 hover:bg-emerald-400"
+              : "bg-slate-700 text-slate-200 hover:bg-slate-600"
+          }`}
+          title="Toggle Serveable — controls visibility in the waste log dropdown"
+        >
+          {params.data.is_serveable ? "✓ Yes" : "No"}
+        </button>
+      ),
+    },
+    {
       headerName: "Actions",
       width: 240,
       cellRenderer: (params: { data: Item }) => (
@@ -377,17 +490,17 @@ export default function AdminItems() {
     <section className="rounded-3xl border border-white/10 bg-slate-950/90 p-8 text-slate-100 shadow-lg shadow-slate-950/20">
       <h1 className="text-3xl font-semibold text-white">Admin: Items</h1>
       <p className="mt-3 text-slate-400">
-        Manage items including type, supplier, and category metadata. The
-        category and packaging columns are editable inline in the grid.
+        Add and update items. You can edit category and packaging directly
+        in the grid.
       </p>
 
       {!isSignedIn ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
           <p>Please sign in to access this page.</p>
         </div>
-      ) : !isHQAdmin ? (
+      ) : !isStoreManager ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
-          <p>This page is only available to HQ administrators.</p>
+          <p>This page is only available to Store Managers.</p>
         </div>
       ) : (
         <div className="mt-8 space-y-6">
@@ -476,6 +589,53 @@ export default function AdminItems() {
                       <option key={c} value={c}>{c}</option>
                     ))}
                   </select>
+                </div>
+                <div>
+                  <label htmlFor="cost" className="block text-sm font-medium text-slate-300">
+                    Production cost ($)
+                  </label>
+                  <input
+                    id="cost"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    inputMode="decimal"
+                    value={costPerUnit}
+                    onChange={(e) => setCostPerUnit(e.target.value)}
+                    placeholder="(none)"
+                    className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="retail" className="block text-sm font-medium text-slate-300">
+                    Retail price ($)
+                  </label>
+                  <input
+                    id="retail"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    inputMode="decimal"
+                    value={retailPricePerUnit}
+                    onChange={(e) => setRetailPricePerUnit(e.target.value)}
+                    placeholder="(none)"
+                    className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
+                  />
+                </div>
+                <div className="flex items-center gap-3 sm:col-span-2">
+                  <input
+                    id="serveable"
+                    type="checkbox"
+                    checked={isServeable}
+                    onChange={(e) => setIsServeable(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-600 bg-slate-800"
+                  />
+                  <label htmlFor="serveable" className="text-sm text-slate-300">
+                    Serveable
+                    <span className="ml-2 text-xs text-slate-500">
+                      — show this item in the Waste Log
+                    </span>
+                  </label>
                 </div>
               </div>
 
