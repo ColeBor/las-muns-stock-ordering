@@ -42,7 +42,16 @@ export function useAuthGate(): AuthGate {
     // the UI doesn't sit on "Loading…" indefinitely if neither resolves.
     const { data: listener } = supabase.auth.onAuthStateChange((_event, s) => {
       if (!alive) return;
-      setSession(s ?? null);
+      // Supabase emits onAuthStateChange for TOKEN_REFRESHED and tab-focus
+      // pings, not just sign-in/out. Each event hands us a fresh `Session`
+      // object even when the logical user hasn't changed. Without this
+      // identity check every refresh would set new state, re-run the
+      // profile-fetch effect, and flicker the page back to "Loading…".
+      setSession((prev) => {
+        const prevId = prev?.user?.id ?? null;
+        const nextId = s?.user?.id ?? null;
+        return prevId === nextId ? prev : s ?? null;
+      });
       setSessionLoaded(true);
     });
 
@@ -70,13 +79,19 @@ export function useAuthGate(): AuthGate {
     };
   }, []);
 
+  // Profile fetch keyed off the user id (a stable string), not the
+  // Session object reference. This insulates the fetch from token
+  // refreshes and other onAuthStateChange events that swap the Session
+  // object without changing who is signed in.
+  const userId = session?.user?.id ?? null;
+
   useEffect(() => {
     if (!sessionLoaded) return;
     let alive = true;
     setProfileLoaded(false);
 
     (async () => {
-      if (!session?.user) {
+      if (!userId) {
         if (!alive) return;
         setProfile(null);
         setProfileLoaded(true);
@@ -85,7 +100,7 @@ export function useAuthGate(): AuthGate {
       const { data } = await supabase
         .from("profiles")
         .select("id,role,store_id,factory_id")
-        .eq("id", session.user.id)
+        .eq("id", userId)
         .single();
       if (!alive) return;
       setProfile((data as AuthProfile) ?? null);
@@ -95,7 +110,7 @@ export function useAuthGate(): AuthGate {
     return () => {
       alive = false;
     };
-  }, [session, sessionLoaded]);
+  }, [userId, sessionLoaded]);
 
   return {
     session,
