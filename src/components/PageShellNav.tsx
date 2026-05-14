@@ -49,6 +49,7 @@ const ADMIN_LINKS: Array<{ href: string; label: string }> = [
   { href: "/factory-stock", label: "Factory Stock" },
   { href: "/admin/directory", label: "Directory" },
   { href: "/admin/items", label: "Items" },
+  { href: "/admin/packaging", label: "Packaging" },
   { href: "/admin/bake-expected", label: "Bake Count" },
   { href: "/admin/training", label: "Training Resources" },
 ];

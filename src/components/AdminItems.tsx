@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
@@ -27,12 +27,12 @@ type Item = {
 };
 
 const SUB_CATEGORIES = ["Empanada", "Dessert", "Drink", "Cleaning Supplies", "General Supplies", "Sauce"];
-const PACKAGING_TYPES = ["Single", "Stack", "Box", "Case", "Dozen", "Crate", "Bundle", "Bulk"];
 
 export default function AdminItems() {
   const { loading: authLoading, isSignedIn, isStoreManager } = useAuthGate();
   const [items, setItems] = useState<Item[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [packagingTypes, setPackagingTypes] = useState<string[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [name, setName] = useState("");
@@ -49,21 +49,27 @@ export default function AdminItems() {
   const canManage = isStoreManager;
 
   const reload = async () => {
-    const [itemsRes, suppliersRes] = await Promise.all([
+    const [itemsRes, suppliersRes, packagingRes] = await Promise.all([
       supabase
         .from("items")
         .select("*, suppliers(name)")
         .order("created_at", { ascending: false }),
       supabase.from("suppliers").select("id, name").order("name"),
+      supabase.from("packaging_types").select("name").order("name"),
     ]);
     if (itemsRes.data) setItems(itemsRes.data as Item[]);
     if (suppliersRes.data) setSuppliers(suppliersRes.data as Supplier[]);
+    if (packagingRes.data)
+      setPackagingTypes(
+        (packagingRes.data as Array<{ name: string }>).map((p) => p.name),
+      );
   };
 
   useEffect(() => {
     if (!canManage) {
       setItems([]);
       setSuppliers([]);
+      setPackagingTypes([]);
       return;
     }
     reload();
@@ -326,7 +332,7 @@ export default function AdminItems() {
     );
   };
 
-  const columnDefs: ColDef<Item>[] = [
+  const columnDefs: ColDef<Item>[] = useMemo(() => [
     { headerName: "Name", field: "name", sortable: true, filter: true, flex: 2, minWidth: 150 },
     {
       headerName: "Type",
@@ -367,7 +373,7 @@ export default function AdminItems() {
       minWidth: 130,
       editable: true,
       cellEditor: "agSelectCellEditor",
-      cellEditorParams: { values: ["", ...PACKAGING_TYPES] },
+      cellEditorParams: { values: ["", ...packagingTypes] },
     },
     {
       headerName: "Cost",
@@ -445,7 +451,7 @@ export default function AdminItems() {
         </div>
       ),
     },
-  ];
+  ], [packagingTypes]);
 
   return (
     <section className="rounded-3xl border border-white/10 bg-slate-950/90 p-8 text-slate-100 shadow-lg shadow-slate-950/20">
@@ -550,7 +556,7 @@ export default function AdminItems() {
                     className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
                   >
                     <option value="">None</option>
-                    {PACKAGING_TYPES.map((c) => (
+                    {packagingTypes.map((c) => (
                       <option key={c} value={c}>{c}</option>
                     ))}
                   </select>
