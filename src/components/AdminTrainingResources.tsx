@@ -179,6 +179,13 @@ export default function AdminTrainingResources() {
     setUploading(true);
     setMessage(null);
 
+    // Wrap the rest in try/finally so an unexpected exception (network
+    // error, supabase-js bug, RLS edge case) doesn't leave the button
+    // stuck on "Saving…". The previous version reset `uploading` in
+    // every explicit error branch, but a thrown promise rejection
+    // bypassed all of them.
+    try {
+
     // Append at the end of the list — `max(sort_order) + 1`. Admin can
     // re-order with up/down after the fact.
     const maxSort = resources.reduce((m, r) => Math.max(m, r.sort_order ?? 0), 0);
@@ -273,7 +280,6 @@ export default function AdminTrainingResources() {
       return;
     }
 
-    setUploading(false);
     setMessage("Saved.");
     setTitle("");
     setDescription("");
@@ -285,6 +291,15 @@ export default function AdminTrainingResources() {
     const input = document.getElementById("training-file") as HTMLInputElement | null;
     if (input) input.value = "";
     loadResources();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("Training resource upload threw:", err);
+      setMessage(
+        `Something went wrong: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      setUploading(false);
+    }
   };
 
   const handleDelete = async (resource: Resource) => {
