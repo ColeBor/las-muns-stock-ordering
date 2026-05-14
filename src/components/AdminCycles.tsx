@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { useAuthGate } from "@/lib/useAuthGate";
 import { formatLocalDate, parseLocalDate } from "@/lib/dateOnly";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
 import { AgGridReact } from "@/lib/agGrid";
@@ -16,13 +17,6 @@ import type {
   IRowNode,
   ValueFormatterParams,
 } from "ag-grid-community";
-
-type Profile = {
-  id: string;
-  role: string | null;
-  store_id: string | null;
-  factory_id: string | null;
-};
 
 type OrderCycle = {
   id: string;
@@ -71,8 +65,7 @@ const emptyOverrideDraft: OverrideDraft = {
 };
 
 export default function AdminCycles() {
-  const [session, setSession] = useState<Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"] | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const { session, loading: authLoading, isSignedIn, isStoreManager } = useAuthGate();
   const [cycles, setCycles] = useState<OrderCycle[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
   const [showForm, setShowForm] = useState(false);
@@ -92,39 +85,7 @@ export default function AdminCycles() {
     setOverrideDraft(emptyOverrideDraft);
   }, [selectedCycleId]);
 
-  const isSignedIn = useMemo(() => !!session?.user, [session]);
-  const isStoreManager = useMemo(() => profile?.role === "store_manager", [profile]);
   const canManage = isStoreManager;
-
-  useEffect(() => {
-    const loadSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      setSession(data.session);
-    };
-    loadSession();
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, sessionData) => {
-      setSession(sessionData ?? null);
-    });
-    return () => {
-      listener?.subscription.unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    const loadProfile = async () => {
-      if (!session?.user) {
-        setProfile(null);
-        return;
-      }
-      const { data } = await supabase
-        .from("profiles")
-        .select("id,role,store_id,factory_id")
-        .eq("id", session.user.id)
-        .single();
-      setProfile((data as Profile) ?? null);
-    };
-    loadProfile();
-  }, [session]);
 
   const reloadCycles = useCallback(async () => {
     const { data } = await supabase
@@ -390,7 +351,11 @@ export default function AdminCycles() {
         factory stock, and what gets delivered.
       </p>
 
-      {!isSignedIn ? (
+      {authLoading ? (
+        <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
+          <p>Loading…</p>
+        </div>
+      ) : !isSignedIn ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
           <p>Please sign in to access this page.</p>
         </div>

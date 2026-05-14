@@ -2,9 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { useAuthGate } from "@/lib/useAuthGate";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
-
-type Profile = { id: string; role: string | null };
 
 type Store = { id: string; name: string };
 
@@ -40,10 +39,7 @@ function formatBytes(n: number | null): string {
 }
 
 export default function AdminTrainingResources() {
-  const [session, setSession] = useState<
-    Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"] | null
-  >(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const { session, loading: authLoading, isSignedIn, isStoreManager } = useAuthGate();
   const [stores, setStores] = useState<Store[]>([]);
   const [resources, setResources] = useState<Resource[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
@@ -72,39 +68,6 @@ export default function AdminTrainingResources() {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [dragOverPosition, setDragOverPosition] = useState<"above" | "below" | null>(null);
-
-  const isSignedIn = useMemo(() => !!session?.user, [session]);
-  const isStoreManager = useMemo(() => profile?.role === "store_manager", [profile]);
-
-  useEffect(() => {
-    const loadSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      setSession(data.session);
-    };
-    loadSession();
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, sessionData) => {
-      setSession(sessionData ?? null);
-    });
-    return () => {
-      listener?.subscription.unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    const loadProfile = async () => {
-      if (!session?.user) {
-        setProfile(null);
-        return;
-      }
-      const { data } = await supabase
-        .from("profiles")
-        .select("id,role")
-        .eq("id", session.user.id)
-        .single();
-      setProfile((data as Profile) ?? null);
-    };
-    loadProfile();
-  }, [session]);
 
   useEffect(() => {
     if (!isStoreManager) return;
@@ -706,7 +669,11 @@ export default function AdminTrainingResources() {
         </p>
       </div>
 
-      {!isSignedIn ? (
+      {authLoading ? (
+        <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
+          <p>Loading…</p>
+        </div>
+      ) : !isSignedIn ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
           <p>Please sign in.</p>
         </div>

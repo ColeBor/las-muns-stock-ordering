@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
+import { useAuthGate } from "@/lib/useAuthGate";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
 import SupabaseAuth from "./SupabaseAuth";
 import HomeAdminLinks from "./HomeAdminLinks";
@@ -27,9 +27,7 @@ function startOfTodayIso(): string {
 }
 
 export default function HomeGate() {
-  const [session, setSession] = useState<Session | null>(null);
-  const [sessionLoading, setSessionLoading] = useState(true);
-  const [profile, setProfile] = useState<{ role: string | null; store_id: string | null } | null>(null);
+  const { session, profile, loading: authLoading } = useAuthGate();
 
   // Per-employee daily alerts shown as ⚠ on the home-page buttons. Each is
   // computed independently; if a query fails the flag stays false and the
@@ -38,48 +36,6 @@ export default function HomeGate() {
   const [bakeAlert, setBakeAlert] = useState(false);
   const [stockEntryAlert, setStockEntryAlert] = useState(false);
   const [requestsAlert, setRequestsAlert] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    supabase.auth.getSession().then(({ data }) => {
-      if (!alive) return;
-      setSession(data.session);
-      setSessionLoading(false);
-    });
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, s) => {
-      if (!alive) return;
-      setSession(s ?? null);
-      setSessionLoading(false);
-    });
-    return () => {
-      alive = false;
-      listener?.subscription.unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    let alive = true;
-    if (!session?.user) {
-      setProfile(null);
-      return;
-    }
-    supabase
-      .from("profiles")
-      .select("role,store_id")
-      .eq("id", session.user.id)
-      .single()
-      .then(({ data, error }) => {
-        if (!alive) return;
-        if (error || !data) {
-          setProfile(null);
-          return;
-        }
-        setProfile(data as { role: string | null; store_id: string | null });
-      });
-    return () => {
-      alive = false;
-    };
-  }, [session]);
 
   useEffect(() => {
     // Alerts only apply to Employees with an assigned store. Store
@@ -207,7 +163,7 @@ export default function HomeGate() {
     "home-employee-requests-alert",
   );
 
-  if (sessionLoading) {
+  if (authLoading) {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-50">
         <main className="flex min-h-screen items-center justify-center px-6">

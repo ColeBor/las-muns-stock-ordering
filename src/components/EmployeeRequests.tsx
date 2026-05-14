@@ -2,14 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { useAuthGate } from "@/lib/useAuthGate";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
-
-type Profile = {
-  id: string;
-  role: string | null;
-  store_id: string | null;
-  factory_id: string | null;
-};
 
 type Store = { id: string; name: string };
 
@@ -67,10 +61,7 @@ const STATUS_CLASS: Record<RequestStatus, string> = {
 const REQUESTS_LAST_SEEN_KEY = "lm-requests-last-seen";
 
 export default function EmployeeRequests() {
-  const [session, setSession] = useState<
-    Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"] | null
-  >(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const { session, profile, loading: authLoading, isSignedIn, isEmployee } = useAuthGate();
   const [store, setStore] = useState<Store | null>(null);
   const [requests, setRequests] = useState<EmployeeRequest[]>([]);
   const [commentsByRequest, setCommentsByRequest] = useState<Record<string, RequestComment[]>>({});
@@ -86,23 +77,7 @@ export default function EmployeeRequests() {
   const [replyDraft, setReplyDraft] = useState<Record<string, string>>({});
   const [replySaving, setReplySaving] = useState<string | null>(null);
 
-  const isSignedIn = useMemo(() => !!session?.user, [session]);
-  const isEmployee = useMemo(() => profile?.role === "employee", [profile]);
   const hasAssignedStore = useMemo(() => !!profile?.store_id, [profile]);
-
-  useEffect(() => {
-    const loadSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      setSession(data.session);
-    };
-    loadSession();
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, sessionData) => {
-      setSession(sessionData ?? null);
-    });
-    return () => {
-      listener?.subscription.unsubscribe();
-    };
-  }, []);
 
   // Mark the requests log as "seen now" on mount and on unmount so the
   // home-page ⚠ icon clears after visiting and only re-appears if HQ does
@@ -115,22 +90,6 @@ export default function EmployeeRequests() {
       localStorage.setItem(REQUESTS_LAST_SEEN_KEY, new Date().toISOString());
     };
   }, []);
-
-  useEffect(() => {
-    const loadProfile = async () => {
-      if (!session?.user) {
-        setProfile(null);
-        return;
-      }
-      const { data } = await supabase
-        .from("profiles")
-        .select("id,role,store_id,factory_id")
-        .eq("id", session.user.id)
-        .single();
-      setProfile((data as Profile) ?? null);
-    };
-    loadProfile();
-  }, [session]);
 
   useEffect(() => {
     if (!profile?.store_id) {
@@ -316,7 +275,11 @@ export default function EmployeeRequests() {
         )}
       </div>
 
-      {!isSignedIn ? (
+      {authLoading ? (
+        <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
+          <p>Loading…</p>
+        </div>
+      ) : !isSignedIn ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
           <p>Please sign in.</p>
         </div>

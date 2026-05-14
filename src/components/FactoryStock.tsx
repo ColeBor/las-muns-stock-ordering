@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { formatLocalDate } from "@/lib/dateOnly";
+import { useAuthGate } from "@/lib/useAuthGate";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
 import { AgGridReact } from "@/lib/agGrid";
 import type { ColDef } from "ag-grid-community";
@@ -11,13 +12,6 @@ import type { ColDef } from "ag-grid-community";
 // Selecting it shows item totals summed across every factory and disables
 // editing (you can't enter a count without specifying which factory).
 const MASTER_FACTORY = "__MASTER__";
-
-type Profile = {
-  id: string;
-  role: string | null;
-  store_id: string | null;
-  factory_id: string | null;
-};
 
 type Factory = {
   id: string;
@@ -78,8 +72,7 @@ type FactoryCountRow = {
 };
 
 export default function FactoryStock() {
-  const [session, setSession] = useState<Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"] | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const { session, profile, loading: authLoading, isSignedIn, isStoreManager } = useAuthGate();
   const [factory, setFactory] = useState<Factory | null>(null);
   const [allFactories, setAllFactories] = useState<Factory[]>([]);
   const [selectedFactoryId, setSelectedFactoryId] = useState("");
@@ -92,8 +85,6 @@ export default function FactoryStock() {
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const isSignedIn = useMemo(() => !!session?.user, [session]);
-  const isStoreManager = useMemo(() => profile?.role === "store_manager", [profile]);
   const isFactoryWorker = useMemo(() => profile?.role === "factory_worker", [profile]);
   const hasAssignedFactory = useMemo(() => !!profile?.factory_id, [profile]);
   const effectiveFactoryId = useMemo(
@@ -103,47 +94,6 @@ export default function FactoryStock() {
   const isMasterView = effectiveFactoryId === MASTER_FACTORY;
   const canManage = (isFactoryWorker && hasAssignedFactory) || (isStoreManager && !!effectiveFactoryId);
   const canEdit = canManage && !isMasterView;
-
-  useEffect(() => {
-    const loadSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      setSession(data.session);
-    };
-
-    loadSession();
-
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, sessionData) => {
-      setSession(sessionData ?? null);
-    });
-
-    return () => {
-      listener?.subscription.unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    const loadProfile = async () => {
-      if (!session?.user) {
-        setProfile(null);
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id,role,store_id,factory_id")
-        .eq("id", session.user.id)
-        .single();
-
-      if (error || !data) {
-        setProfile(null);
-        return;
-      }
-
-      setProfile(data as Profile);
-    };
-
-    loadProfile();
-  }, [session]);
 
   useEffect(() => {
     if (!isStoreManager) return;
@@ -475,7 +425,11 @@ export default function FactoryStock() {
         Enter how much of each item you have. See what&apos;s been allocated and what&apos;s left.
       </p>
 
-      {!isSignedIn ? (
+      {authLoading ? (
+        <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
+          <p>Loading…</p>
+        </div>
+      ) : !isSignedIn ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
           <p>Please sign in with Supabase Auth first to access this page.</p>
         </div>

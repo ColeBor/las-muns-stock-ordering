@@ -2,9 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { useAuthGate } from "@/lib/useAuthGate";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
-
-type Profile = { id: string; role: string | null };
 
 type Store = { id: string; name: string };
 
@@ -62,10 +61,7 @@ const STATUS_CLASS: Record<RequestStatus, string> = {
 };
 
 export default function AdminEmployeeRequests() {
-  const [session, setSession] = useState<
-    Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"] | null
-  >(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const { session, profile, loading: authLoading, isSignedIn, isStoreManager } = useAuthGate();
   const [stores, setStores] = useState<Store[]>([]);
   const [requests, setRequests] = useState<EmployeeRequest[]>([]);
   const [commentsByRequest, setCommentsByRequest] = useState<Record<string, RequestComment[]>>({});
@@ -83,23 +79,6 @@ export default function AdminEmployeeRequests() {
   const [needInfoSavingId, setNeedInfoSavingId] = useState<string | null>(null);
   const [statusSavingId, setStatusSavingId] = useState<string | null>(null);
 
-  const isSignedIn = useMemo(() => !!session?.user, [session]);
-  const isStoreManager = useMemo(() => profile?.role === "store_manager", [profile]);
-
-  useEffect(() => {
-    const loadSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      setSession(data.session);
-    };
-    loadSession();
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, sessionData) => {
-      setSession(sessionData ?? null);
-    });
-    return () => {
-      listener?.subscription.unsubscribe();
-    };
-  }, []);
-
   // Mark the admin requests log as "seen now" on mount and on unmount so
   // the home-page ⚠ icon clears after visiting and only re-appears if a
   // new submission or comment lands afterwards. Mirrors the employee-side
@@ -111,22 +90,6 @@ export default function AdminEmployeeRequests() {
       localStorage.setItem("lm-admin-requests-last-seen", new Date().toISOString());
     };
   }, []);
-
-  useEffect(() => {
-    const loadProfile = async () => {
-      if (!session?.user) {
-        setProfile(null);
-        return;
-      }
-      const { data } = await supabase
-        .from("profiles")
-        .select("id,role")
-        .eq("id", session.user.id)
-        .single();
-      setProfile((data as Profile) ?? null);
-    };
-    loadProfile();
-  }, [session]);
 
   useEffect(() => {
     if (!isStoreManager) return;
@@ -314,7 +277,11 @@ export default function AdminEmployeeRequests() {
         </p>
       </div>
 
-      {!isSignedIn ? (
+      {authLoading ? (
+        <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
+          <p>Loading…</p>
+        </div>
+      ) : !isSignedIn ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
           <p>Please sign in.</p>
         </div>

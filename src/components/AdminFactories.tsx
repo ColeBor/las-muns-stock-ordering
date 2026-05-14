@@ -1,17 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { useAuthGate } from "@/lib/useAuthGate";
 import { AgGridReact } from "@/lib/agGrid";
 import type { ColDef } from "ag-grid-community";
-
-type Profile = {
-  id: string;
-  role: string | null;
-  store_id: string | null;
-  factory_id: string | null;
-};
 
 type Factory = {
   id: string;
@@ -25,8 +19,7 @@ export default function AdminFactories({
 }: {
   viewSelector?: React.ReactNode;
 } = {}) {
-  const [session, setSession] = useState<Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"] | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const { loading: authLoading, isSignedIn, isStoreManager } = useAuthGate();
   const [factories, setFactories] = useState<Factory[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingFactory, setEditingFactory] = useState<Factory | null>(null);
@@ -35,50 +28,7 @@ export default function AdminFactories({
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const isSignedIn = useMemo(() => !!session?.user, [session]);
-  const isStoreManager = useMemo(() => profile?.role === "store_manager", [profile]);
   const canManage = isStoreManager;
-
-  useEffect(() => {
-    const loadSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      setSession(data.session);
-    };
-
-    loadSession();
-
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, sessionData) => {
-      setSession(sessionData ?? null);
-    });
-
-    return () => {
-      listener?.subscription.unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    const loadProfile = async () => {
-      if (!session?.user) {
-        setProfile(null);
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id,role,store_id,factory_id")
-        .eq("id", session.user.id)
-        .single();
-
-      if (error || !data) {
-        setProfile(null);
-        return;
-      }
-
-      setProfile(data as Profile);
-    };
-
-    loadProfile();
-  }, [session]);
 
   useEffect(() => {
     if (!canManage) {
@@ -211,7 +161,11 @@ export default function AdminFactories({
         </>
       )}
 
-      {!isSignedIn ? (
+      {authLoading ? (
+        <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
+          <p>Loading…</p>
+        </div>
+      ) : !isSignedIn ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
           <p>Please sign in with Supabase Auth first to access this page.</p>
         </div>
