@@ -94,20 +94,18 @@ export default function HomeAdminLinks() {
   // Employee Requests alert: counts every request whose updated_at has
   // moved past the timestamp this Store Manager last "saw" the requests
   // page. updated_at bumps on new submissions, status changes, and new
-  // comments via the touch_employee_request trigger.
+  // comments via the touch_employee_request trigger. When lastSeen is
+  // missing (fresh browser, never visited /admin/requests) we treat
+  // everything as unseen so the badge still shows up.
   const loadRequestsAlertCount = useCallback(async () => {
     if (!isStoreManager) {
       setRequestsAlertCount(0);
       return;
     }
     const lastSeen =
-      typeof window !== "undefined"
+      (typeof window !== "undefined"
         ? localStorage.getItem(ADMIN_REQUESTS_LAST_SEEN_KEY)
-        : null;
-    if (!lastSeen) {
-      setRequestsAlertCount(0);
-      return;
-    }
+        : null) ?? "1970-01-01T00:00:00Z";
     const { count, error } = await supabase
       .from("employee_requests")
       .select("id", { count: "exact", head: true })

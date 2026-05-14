@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
+import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
 import SupabaseAuth from "./SupabaseAuth";
 import HomeAdminLinks from "./HomeAdminLinks";
 
@@ -162,31 +163,49 @@ export default function HomeGate() {
       setStockEntryAlert(unfinished);
     })();
 
-    // Requests & Issues: alert if any request for this store has
-    // updated_at greater than the locally-stored last-seen timestamp.
-    // `updated_at` bumps on status changes and new comments via the
-    // touch_employee_request trigger.
-    (async () => {
-      const lastSeen =
-        typeof window !== "undefined" ? localStorage.getItem(REQUESTS_LAST_SEEN_KEY) : null;
-      if (!lastSeen) {
-        setRequestsAlert(false);
-        return;
-      }
-      const { data } = await supabase
-        .from("employee_requests")
-        .select("id")
-        .eq("store_id", storeId)
-        .gt("updated_at", lastSeen)
-        .limit(1);
-      if (!alive) return;
-      setRequestsAlert(((data as unknown[]) ?? []).length > 0);
-    })();
-
     return () => {
       alive = false;
     };
   }, [profile?.role, profile?.store_id]);
+
+  // Requests & Issues: alert if any request for this store has updated_at
+  // greater than the locally-stored last-seen timestamp. `updated_at` bumps
+  // on status changes and new comments via the touch_employee_request
+  // trigger. When lastSeen is missing (fresh browser, never visited
+  // /requests) we treat everything as unseen. Split out from the other
+  // alert checks so we can subscribe to realtime changes and update the
+  // badge without a page refresh when HQ replies.
+  const loadRequestsAlert = useCallback(async () => {
+    if (profile?.role !== "employee" || !profile?.store_id) {
+      setRequestsAlert(false);
+      return;
+    }
+    const lastSeen =
+      (typeof window !== "undefined" ? localStorage.getItem(REQUESTS_LAST_SEEN_KEY) : null) ??
+      "1970-01-01T00:00:00Z";
+    const { data } = await supabase
+      .from("employee_requests")
+      .select("id")
+      .eq("store_id", profile.store_id)
+      .gt("updated_at", lastSeen)
+      .limit(1);
+    setRequestsAlert(((data as unknown[]) ?? []).length > 0);
+  }, [profile?.role, profile?.store_id]);
+
+  useEffect(() => {
+    loadRequestsAlert();
+  }, [loadRequestsAlert]);
+
+  useRealtimeRefetch(
+    profile?.role === "employee" && profile?.store_id
+      ? [
+          { table: "employee_requests" },
+          { table: "employee_request_comments" },
+        ]
+      : [],
+    loadRequestsAlert,
+    "home-employee-requests-alert",
+  );
 
   if (sessionLoading) {
     return (

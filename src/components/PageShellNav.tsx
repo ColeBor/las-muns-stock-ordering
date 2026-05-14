@@ -126,13 +126,9 @@ export default function PageShellNav() {
       return;
     }
     const lastSeen =
-      typeof window !== "undefined"
+      (typeof window !== "undefined"
         ? localStorage.getItem(ADMIN_REQUESTS_LAST_SEEN_KEY)
-        : null;
-    if (!lastSeen) {
-      setRequestsAlertCount(0);
-      return;
-    }
+        : null) ?? "1970-01-01T00:00:00Z";
     const { count, error } = await supabase
       .from("employee_requests")
       .select("id", { count: "exact", head: true })
@@ -248,13 +244,11 @@ export default function PageShellNav() {
     })();
 
     // Requests & Issues: anything updated since the employee last visited.
+    // No lastSeen yet (fresh browser) → treat everything as unseen.
     (async () => {
       const lastSeen =
-        typeof window !== "undefined" ? localStorage.getItem(REQUESTS_LAST_SEEN_KEY) : null;
-      if (!lastSeen) {
-        setEmpRequestsAlert(false);
-        return;
-      }
+        (typeof window !== "undefined" ? localStorage.getItem(REQUESTS_LAST_SEEN_KEY) : null) ??
+        "1970-01-01T00:00:00Z";
       const { data } = await supabase
         .from("employee_requests")
         .select("id")
