@@ -24,17 +24,14 @@ type OrderCycle = {
   order_date: string;
 };
 
-type FactoryCount = {
-  cycle_id: string;
+// Rolling per-(factory, item) on-hand count. Editable any time, not tied
+// to any cycle. The allocator reads from this table at run time and
+// snapshots it to factory_counts(cycle_id, …) for audit.
+type FactoryInventoryRow = {
   factory_id: string;
   item_id: string;
-  available_qty: number;
-  counted_at: string;
-  items?: {
-    name: string;
-    type: string;
-    sub_category: string | null;
-  };
+  on_hand_qty: number;
+  last_counted_at: string;
 };
 
 type AllocationFactory = {
@@ -77,7 +74,7 @@ export default function FactoryStock() {
   const [allFactories, setAllFactories] = useState<Factory[]>([]);
   const [selectedFactoryId, setSelectedFactoryId] = useState("");
   const [cycles, setCycles] = useState<OrderCycle[]>([]);
-  const [counts, setCounts] = useState<FactoryCount[]>([]);
+  const [inventory, setInventory] = useState<FactoryInventoryRow[]>([]);
   const [allocations, setAllocations] = useState<AllocationFactory[]>([]);
   const [productionAlerts, setProductionAlerts] = useState<ProductionAlert[]>([]);
   const [selectedCycleId, setSelectedCycleId] = useState("");
@@ -108,7 +105,7 @@ export default function FactoryStock() {
     if (!canManage || !effectiveFactoryId) {
       setFactory(null);
       setCycles([]);
-      setCounts([]);
+      setInventory([]);
       setAllocations([]);
       setGridData([]);
       return;
@@ -160,29 +157,47 @@ export default function FactoryStock() {
     loadFactoryData();
   }, [canManage, effectiveFactoryId, isMasterView]);
 
-  // Lazy-fetch factory_counts and allocation_factories scoped to the
-  // selected cycle (and factory, unless in master view).
+  // Live rolling inventory — keyed only by factory. No cycle dependency,
+  // so factory workers can keep counts up to date even when no cycle is
+  // active. In master view we pull every factory's rows so the grid can
+  // sum across them.
+  const loadInventory = useCallback(async () => {
+    if (!canManage || !effectiveFactoryId) {
+      setInventory([]);
+      return;
+    }
+    const q = supabase
+      .from("factory_inventory")
+      .select("factory_id,item_id,on_hand_qty,last_counted_at");
+    if (!isMasterView) q.eq("factory_id", effectiveFactoryId);
+    const { data } = await q;
+    if (data) setInventory(data as FactoryInventoryRow[]);
+  }, [canManage, effectiveFactoryId, isMasterView]);
+
+  useEffect(() => {
+    loadInventory();
+  }, [loadInventory]);
+
+  useRealtimeRefetch(
+    canManage && effectiveFactoryId
+      ? [{ table: "factory_inventory" }]
+      : [],
+    loadInventory,
+    `factory-${effectiveFactoryId}-inventory`,
+  );
+
+  // Per-cycle context (allocations + production alerts) — optional. Empty
+  // when no cycle is selected; the grid just hides those numbers.
   const loadCycleScoped = useCallback(async () => {
     if (!canManage || !effectiveFactoryId || !selectedCycleId) {
-      setCounts([]);
       setAllocations([]);
       setProductionAlerts([]);
       return;
     }
-    const countsQuery = supabase
-      .from("factory_counts")
-      .select(
-        "cycle_id,factory_id,item_id,available_qty,counted_at,items(name,type,sub_category)",
-      )
-      .eq("cycle_id", selectedCycleId);
     const allocationsQuery = supabase
       .from("allocation_factories")
       .select("cycle_id,store_id,item_id,qty,factory_id")
       .eq("cycle_id", selectedCycleId);
-    // Production alerts come from the top-level allocations table since
-    // overdraft and shortfall live there (allocation_factories only has
-    // the per-factory split qty). Skip in master view — there's no
-    // single factory to alert.
     const alertsQuery = !isMasterView
       ? supabase
           .from("allocations")
@@ -191,18 +206,12 @@ export default function FactoryStock() {
           .eq("factory_id", effectiveFactoryId)
       : null;
     if (!isMasterView) {
-      countsQuery.eq("factory_id", effectiveFactoryId);
       allocationsQuery.eq("factory_id", effectiveFactoryId);
     }
-    const [countsResponse, allocationsResponse, alertsResponse] =
-      await Promise.all([
-        countsQuery,
-        allocationsQuery,
-        alertsQuery ?? Promise.resolve({ data: null }),
-      ]);
-    if (countsResponse.data) {
-      setCounts(countsResponse.data as unknown as FactoryCount[]);
-    }
+    const [allocationsResponse, alertsResponse] = await Promise.all([
+      allocationsQuery,
+      alertsQuery ?? Promise.resolve({ data: null }),
+    ]);
     if (allocationsResponse.data) {
       setAllocations(allocationsResponse.data as AllocationFactory[]);
     }
@@ -245,13 +254,12 @@ export default function FactoryStock() {
   useRealtimeRefetch(
     canManage && effectiveFactoryId && selectedCycleId
       ? [
-          { table: "factory_counts", filter: `cycle_id=eq.${selectedCycleId}` },
           { table: "allocation_factories", filter: `cycle_id=eq.${selectedCycleId}` },
           { table: "allocations", filter: `cycle_id=eq.${selectedCycleId}` },
         ]
       : [],
     loadCycleScoped,
-    `factory-${effectiveFactoryId}-cycle-${selectedCycleId}-stock`,
+    `factory-${effectiveFactoryId}-cycle-${selectedCycleId}-allocations`,
   );
 
   useEffect(() => {
@@ -261,7 +269,7 @@ export default function FactoryStock() {
   }, [cycles, selectedCycleId]);
 
   useEffect(() => {
-    if (!selectedCycleId || !effectiveFactoryId) {
+    if (!effectiveFactoryId) {
       setGridData([]);
       return;
     }
@@ -278,24 +286,26 @@ export default function FactoryStock() {
         return;
       }
 
-      // Prepare grid data by combining items with existing counts and allocations.
-      // In master view we sum across every factory's count and allocation for
-      // the cycle; in single-factory view there's only one row per item, so
-      // these reductions still produce the right number.
+      // Prepare grid data by combining items with the rolling factory_inventory
+      // and (optionally) the selected cycle's allocations. In master view we
+      // sum across every factory's row; in single-factory view there's only
+      // one row per item, so the reductions still produce the right number.
+      // No cycle selected → allocations / remaining columns stay at 0.
       let gridRows: FactoryCountRow[] = itemsData.map(item => {
-        const matchingCounts = counts.filter(
-          count => count.cycle_id === selectedCycleId && count.item_id === item.id,
-        );
+        const matchingInventory = inventory.filter((r) => r.item_id === item.id);
 
-        const itemAllocations = allocations.filter(
-          alloc => alloc.cycle_id === selectedCycleId && alloc.item_id === item.id
-        );
+        const itemAllocations = selectedCycleId
+          ? allocations.filter(
+              (alloc) =>
+                alloc.cycle_id === selectedCycleId && alloc.item_id === item.id,
+            )
+          : [];
 
         const totalAllocated = itemAllocations.reduce((sum, alloc) => sum + alloc.qty, 0);
-        const availableQty = matchingCounts.reduce((sum, c) => sum + c.available_qty, 0);
-        const reserveQty = matchingCounts.length; // 1 reserved per factory holding this item
-        const allocatableQty = matchingCounts.reduce(
-          (sum, c) => sum + Math.max(0, c.available_qty - 1),
+        const availableQty = matchingInventory.reduce((sum, r) => sum + r.on_hand_qty, 0);
+        const reserveQty = matchingInventory.length; // 1 reserved per factory holding this item
+        const allocatableQty = matchingInventory.reduce(
+          (sum, r) => sum + Math.max(0, r.on_hand_qty - 1),
           0,
         );
 
@@ -305,7 +315,7 @@ export default function FactoryStock() {
           item_type: item.type,
           available_qty: availableQty,
           allocatable_qty: allocatableQty,
-          has_existing_count: matchingCounts.length > 0,
+          has_existing_count: matchingInventory.length > 0,
           total_allocated: totalAllocated,
           remaining_after_reserve: allocatableQty - totalAllocated,
           reserve_qty: reserveQty,
@@ -322,10 +332,10 @@ export default function FactoryStock() {
     };
 
     loadManufacturedItems();
-  }, [selectedCycleId, counts, allocations, effectiveFactoryId]);
+  }, [selectedCycleId, inventory, allocations, effectiveFactoryId]);
 
   const handleCellValueChanged = async (params: any) => {
-    if (!canEdit || !selectedCycleId || !effectiveFactoryId) {
+    if (!canEdit || !effectiveFactoryId) {
       setMessage(
         isMasterView
           ? "Switch to a specific factory to edit counts."
@@ -347,38 +357,27 @@ export default function FactoryStock() {
     setMessage(null);
 
     const payload = {
-      cycle_id: selectedCycleId,
       factory_id: effectiveFactoryId,
       item_id: data.item_id,
-      available_qty: qtyValue,
-      counted_by: session?.user?.email ?? session?.user?.id,
+      on_hand_qty: qtyValue,
+      last_counted_at: new Date().toISOString(),
+      counted_by: session?.user?.email ?? session?.user?.id ?? null,
     };
 
     const { error } = await supabase
-      .from("factory_counts")
-      .upsert([payload], { onConflict: "cycle_id,factory_id,item_id" });
+      .from("factory_inventory")
+      .upsert([payload], { onConflict: "factory_id,item_id" });
 
     setLoading(false);
 
     if (error) {
       setMessage(error.message);
-      // Revert the change in the grid
       params.node.setDataValue(colDef.field, params.oldValue);
       return;
     }
 
-    setMessage("Stock count saved successfully.");
-
-    // Update the local counts state
-    const { data: countsData } = await supabase
-      .from("factory_counts")
-      .select("cycle_id,factory_id,item_id,available_qty,counted_at,items(name,type)")
-      .eq("factory_id", effectiveFactoryId)
-      .order("counted_at", { ascending: false });
-
-    if (countsData) {
-      setCounts(countsData as unknown as FactoryCount[]);
-    }
+    setMessage("Stock count saved.");
+    await loadInventory();
   };
 
   const columnDefs: ColDef<FactoryCountRow>[] = [
@@ -491,7 +490,7 @@ export default function FactoryStock() {
                 </>
               )}
               <label htmlFor="cycle" className="text-sm font-medium text-slate-300">
-                Order Cycle:
+                Order Cycle (optional):
               </label>
               <select
                 id="cycle"
@@ -499,6 +498,7 @@ export default function FactoryStock() {
                 onChange={(event) => setSelectedCycleId(event.target.value)}
                 className="px-3 py-2 bg-slate-800 border border-slate-600 rounded text-white text-sm"
               >
+                <option value="">(none — just on-hand)</option>
                 {cycles.map((cycle) => (
                   <option key={cycle.id} value={cycle.id}>
                     {formatLocalDate(cycle.order_date)} ({cycle.status.charAt(0).toUpperCase() + cycle.status.slice(1)})
@@ -579,12 +579,12 @@ export default function FactoryStock() {
           <div className="text-sm text-slate-400">
             <p><strong>Instructions:</strong></p>
             <ul className="list-disc list-inside mt-2 space-y-1">
-              <li>Select an order cycle from the dropdown above</li>
-              <li>Click on &quot;Available Qty&quot; cells to edit stock quantities (1 unit per factory is reserved automatically and excluded from Allocatable)</li>
+              <li>Edit &quot;Available&quot; any time — counts roll forward independently of cycles. The allocator reads from this on every run and snapshots it for audit.</li>
+              <li>1 unit per factory is reserved automatically and excluded from Allocatable</li>
               <li>Changes are saved automatically when you finish editing a cell</li>
               <li>Cells with darker backgrounds already have saved counts</li>
               <li><strong className="text-green-400">Allocatable:</strong> Available stock minus the per-factory reserve</li>
-              <li>&quot;Allocated&quot; shows total quantities allocated to stores; &quot;Remaining&quot; turns red if it goes negative</li>
+              <li>Pick a cycle to see what got allocated and what&apos;s left for it (Remaining turns red if negative). Leave empty to focus on on-hand only.</li>
               <li>Switch the Factory dropdown to <strong>Master factory</strong> for a read-only view aggregated across every factory</li>
             </ul>
           </div>

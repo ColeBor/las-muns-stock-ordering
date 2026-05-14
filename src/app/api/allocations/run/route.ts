@@ -22,11 +22,14 @@ type Item = {
   supplier_id: string | null;
 };
 
-type FactoryCount = {
-  cycle_id: string;
+// Live per-(factory, item) on-hand count. Replaces the old factory_counts
+// read which was scoped per-cycle. The allocator now reads inventory
+// independent of any cycle and snapshots it back to factory_counts
+// post-run for audit.
+type FactoryInventoryRow = {
   factory_id: string;
   item_id: string;
-  available_qty: number;
+  on_hand_qty: number;
 };
 
 type StoreFactory = {
@@ -148,10 +151,12 @@ export async function POST(request: NextRequest) {
       .from("stock_entries")
       .select("cycle_id,store_id,item_id,current_count")
       .eq("cycle_id", cycle_id),
+    // Read live factory inventory (no cycle scoping). Post-run we
+    // snapshot whatever rows actually fed this allocation into
+    // factory_counts(cycle_id, …) for audit.
     supabaseAdmin
-      .from("factory_counts")
-      .select("cycle_id,factory_id,item_id,available_qty")
-      .eq("cycle_id", cycle_id),
+      .from("factory_inventory")
+      .select("factory_id,item_id,on_hand_qty"),
     supabaseAdmin
       .from("store_factories")
       .select("store_id,factory_id,priority"),
@@ -191,7 +196,7 @@ export async function POST(request: NextRequest) {
   }
 
   const stockEntries = (stockRes.data ?? []) as StockEntry[];
-  const factoryCounts = (factoryRes.data ?? []) as FactoryCount[];
+  const factoryInventory = (factoryRes.data ?? []) as FactoryInventoryRow[];
   const storeFactories = (storeFactoryRes.data ?? []) as StoreFactory[];
   const overrides = (overrideRes.data ?? []) as Override[];
   const items = (itemsRes.data ?? []) as Item[];
@@ -221,7 +226,7 @@ export async function POST(request: NextRequest) {
     }
   }
   const factoriesWithCounts = new Set(
-    factoryCounts.map((fc) => fc.factory_id),
+    factoryInventory.map((fc) => fc.factory_id),
   );
   const missingFactoryIds = [...participatingFactoryIds].filter(
     (id) => !factoriesWithCounts.has(id),
@@ -276,8 +281,8 @@ export async function POST(request: NextRequest) {
 
   // Running available stock per (factory, item) after the per-item reserve.
   const availableMap = new Map<string, number>();
-  for (const fc of factoryCounts) {
-    const allocatable = Math.max(0, fc.available_qty - RESERVE_PER_FACTORY_ITEM);
+  for (const fc of factoryInventory) {
+    const allocatable = Math.max(0, fc.on_hand_qty - RESERVE_PER_FACTORY_ITEM);
     availableMap.set(availableKey(fc.factory_id, fc.item_id), allocatable);
   }
 
@@ -572,6 +577,25 @@ export async function POST(request: NextRequest) {
     (sum, a) => sum + (a.shortfall > 0 ? 1 : 0),
     0,
   );
+
+  // Snapshot the factory_inventory rows that fed this allocation into
+  // factory_counts(cycle_id, …) for audit. Wipe any prior snapshot for
+  // the cycle so re-runs replace cleanly. Best-effort: a failure here
+  // doesn't roll back the allocations themselves.
+  await supabaseAdmin
+    .from("factory_counts")
+    .delete()
+    .eq("cycle_id", cycle_id);
+  if (factoryInventory.length > 0) {
+    await supabaseAdmin.from("factory_counts").insert(
+      factoryInventory.map((fi) => ({
+        cycle_id,
+        factory_id: fi.factory_id,
+        item_id: fi.item_id,
+        available_qty: fi.on_hand_qty,
+      })),
+    );
+  }
 
   // Promote draft → allocated. Re-runs leave 'allocated' as-is.
   const { error: promoteErr } = await supabaseAdmin
