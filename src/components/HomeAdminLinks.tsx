@@ -180,7 +180,6 @@ export default function HomeAdminLinks() {
       <AdminSection title="Configuration">
         <AdminLink href="/admin/directory">Directory</AdminLink>
         <AdminLink href="/admin/items">Items</AdminLink>
-        <AdminLink href="/admin/packaging">Packaging</AdminLink>
         <AdminLink href="/admin/bake-expected">Bake Count</AdminLink>
         <AdminLink href="/admin/training">Training Resources</AdminLink>
       </AdminSection>

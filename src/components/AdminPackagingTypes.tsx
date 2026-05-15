@@ -14,7 +14,11 @@ type PackagingType = {
   created_at: string;
 };
 
-export default function AdminPackagingTypes() {
+export default function AdminPackagingTypes({
+  viewSelector,
+}: {
+  viewSelector?: React.ReactNode;
+} = {}) {
   const { loading: authLoading, isSignedIn, isStoreManager } = useAuthGate();
   const [packagingTypes, setPackagingTypes] = useState<PackagingType[]>([]);
   const [showForm, setShowForm] = useState(false);
@@ -158,10 +162,14 @@ export default function AdminPackagingTypes() {
 
   return (
     <section className="rounded-3xl border border-white/10 bg-slate-950/90 p-8 text-slate-100 shadow-lg shadow-slate-950/20">
-      <h1 className="text-3xl font-semibold text-white">Admin: Packaging Types</h1>
-      <p className="mt-3 text-slate-400">
-        Manage the packaging types available when creating or editing items.
-      </p>
+      {!viewSelector && (
+        <>
+          <h1 className="text-3xl font-semibold text-white">Admin: Packaging Types</h1>
+          <p className="mt-3 text-slate-400">
+            Manage the packaging types available when creating or editing items.
+          </p>
+        </>
+      )}
 
       {authLoading ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
@@ -178,7 +186,9 @@ export default function AdminPackagingTypes() {
       ) : (
         <div className="mt-8 space-y-6">
           <div className="flex flex-wrap justify-between items-center gap-3">
-            <h2 className="text-xl font-semibold text-white">Packaging Types</h2>
+            {viewSelector ?? (
+              <h2 className="text-xl font-semibold text-white">Packaging Types</h2>
+            )}
             <button
               onClick={() => {
                 setEditing(null);
