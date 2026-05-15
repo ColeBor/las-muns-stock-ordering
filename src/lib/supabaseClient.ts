@@ -16,9 +16,28 @@ const passthroughLock = <R>(
   fn: () => Promise<R>,
 ) => fn();
 
+// Belt-and-suspenders for the same family of hangs: cap every outgoing
+// fetch (REST queries, auth refreshes, storage uploads, …) at 20s. If
+// something stalls beyond that, AbortController kicks in and the caller
+// receives a rejection it can recover from instead of the UI sitting on
+// Loading… / Running… forever. Honor a caller-supplied signal if there
+// is one — don't double-abort.
+const REQUEST_TIMEOUT_MS = 20_000;
+const fetchWithTimeout: typeof fetch = (input, init) => {
+  if (init?.signal) {
+    return fetch(input, init);
+  }
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  return fetch(input, { ...init, signal: ctrl.signal }).finally(() =>
+    clearTimeout(timer),
+  );
+};
+
 export const supabase: SupabaseClient =
   supabaseUrl && supabaseAnonKey
     ? createClient(supabaseUrl, supabaseAnonKey, {
         auth: { lock: passthroughLock },
+        global: { fetch: fetchWithTimeout },
       })
     : ({} as SupabaseClient);
