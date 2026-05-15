@@ -166,7 +166,7 @@ export default function AdminWasteAnalytics() {
   const [compareMode, setCompareMode] = useState<CompareMode>("none");
   const [items, setItems] = useState<Item[]>([]);
   const [entries, setEntries] = useState<WasteEntry[]>([]);
-  const [breakdown, setBreakdown] = useState<"item" | "reason">("item");
+  const [breakdown, setBreakdown] = useState<"item" | "reason" | "item_reason">("item");
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -360,6 +360,83 @@ export default function AdminWasteAnalytics() {
     [byReasonCurrent, byReasonPrev],
   );
 
+  // Cross-reference: every (item, reason) pair as its own row. Lets the
+  // admin answer "which flavour was wasted because of X" instead of just
+  // one axis at a time.
+  const itemReasonKey = (e: WasteEntry) => `${e.item_id}|${reasonKey(e)}`;
+  const itemReasonLabel = (e: WasteEntry) => {
+    const name = itemMap.get(e.item_id)?.name ?? e.item_id;
+    return `${name} · ${reasonKey(e)}`;
+  };
+  const byItemReasonCurrent = useMemo(
+    () => aggregate(currentEntries, itemReasonKey, itemReasonLabel, itemMap),
+    [currentEntries, itemMap],
+  );
+  const byItemReasonPrev = useMemo(
+    () => aggregate(prevEntries, itemReasonKey, itemReasonLabel, itemMap),
+    [prevEntries, itemMap],
+  );
+  const itemReasonRows = useMemo(
+    () => joinRows(byItemReasonCurrent, byItemReasonPrev),
+    [byItemReasonCurrent, byItemReasonPrev],
+  );
+
+  // Daily series for the line chart. Covers every day in the current
+  // range (including zeros) so the line doesn't skip over empty days.
+  const dailySeries = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const e of currentEntries) {
+      map.set(e.wasted_on, (map.get(e.wasted_on) ?? 0) + e.quantity);
+    }
+    const out: Array<{ date: string; qty: number }> = [];
+    if (!currentRange.start || !currentRange.end) return out;
+    let cursor = parseYmd(currentRange.start);
+    const end = parseYmd(currentRange.end);
+    while (cursor <= end) {
+      const k = ymd(cursor);
+      out.push({ date: k, qty: map.get(k) ?? 0 });
+      cursor = addDays(cursor, 1);
+    }
+    return out;
+  }, [currentEntries, currentRange]);
+
+  // Items × reasons matrix for the stacked bar. Reasons are sorted by
+  // their global qty so the legend / segment order is stable across items.
+  const stackedItemsByReason = useMemo(() => {
+    const allReasons = new Set<string>();
+    const perItem = new Map<string, Map<string, number>>();
+    const totalPerItem = new Map<string, number>();
+    for (const e of currentEntries) {
+      const r = reasonKey(e);
+      allReasons.add(r);
+      const itemBucket = perItem.get(e.item_id) ?? new Map<string, number>();
+      itemBucket.set(r, (itemBucket.get(r) ?? 0) + e.quantity);
+      perItem.set(e.item_id, itemBucket);
+      totalPerItem.set(e.item_id, (totalPerItem.get(e.item_id) ?? 0) + e.quantity);
+    }
+    const reasonTotals = new Map<string, number>();
+    for (const bucket of perItem.values()) {
+      for (const [r, q] of bucket) {
+        reasonTotals.set(r, (reasonTotals.get(r) ?? 0) + q);
+      }
+    }
+    const reasons = Array.from(allReasons).sort(
+      (a, b) => (reasonTotals.get(b) ?? 0) - (reasonTotals.get(a) ?? 0),
+    );
+    const itemIds = Array.from(perItem.keys()).sort(
+      (a, b) => (totalPerItem.get(b) ?? 0) - (totalPerItem.get(a) ?? 0),
+    );
+    return {
+      reasons,
+      rows: itemIds.map((id) => ({
+        item_id: id,
+        item_name: itemMap.get(id)?.name ?? id,
+        total: totalPerItem.get(id) ?? 0,
+        byReason: perItem.get(id) ?? new Map<string, number>(),
+      })),
+    };
+  }, [currentEntries, itemMap]);
+
   const missingPriceCount = useMemo(() => {
     const seen = new Set<string>();
     for (const e of currentEntries) {
@@ -514,6 +591,25 @@ export default function AdminWasteAnalytics() {
             </div>
           )}
 
+          <div className="grid gap-4 lg:grid-cols-2">
+            <ChartCard title="Daily Waste">
+              <LineChart data={dailySeries} />
+            </ChartCard>
+            <ChartCard title="Reasons">
+              <BarList rows={byReasonCurrent} max={10} colorIndex />
+            </ChartCard>
+            <ChartCard title="Top Items">
+              <BarList rows={byItemCurrent} max={10} />
+            </ChartCard>
+            <ChartCard title="Items by Reason">
+              <StackedItemBars
+                rows={stackedItemsByReason.rows}
+                reasons={stackedItemsByReason.reasons}
+                max={10}
+              />
+            </ChartCard>
+          </div>
+
           <div className="flex items-center justify-between flex-wrap gap-3">
             <h3 className="text-lg font-semibold text-white">Breakdown</h3>
             <div className="flex items-center gap-2">
@@ -521,18 +617,33 @@ export default function AdminWasteAnalytics() {
               <select
                 id="breakdown"
                 value={breakdown}
-                onChange={(e) => setBreakdown(e.target.value as "item" | "reason")}
+                onChange={(e) =>
+                  setBreakdown(e.target.value as "item" | "reason" | "item_reason")
+                }
                 className="rounded-2xl border border-white/10 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400"
               >
                 <option value="item">By Item</option>
                 <option value="reason">By Reason</option>
+                <option value="item_reason">By Item &amp; Reason</option>
               </select>
             </div>
           </div>
 
           <BreakdownTable
-            title={breakdown === "item" ? "By Item" : "By Reason"}
-            rows={breakdown === "item" ? itemRows : reasonRows}
+            title={
+              breakdown === "item"
+                ? "By Item"
+                : breakdown === "reason"
+                  ? "By Reason"
+                  : "By Item & Reason"
+            }
+            rows={
+              breakdown === "item"
+                ? itemRows
+                : breakdown === "reason"
+                  ? reasonRows
+                  : itemReasonRows
+            }
             comparing={comparing}
             loading={loading}
           />
@@ -624,6 +735,229 @@ function BreakdownTable({
             </tbody>
           </table>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Charts ──────────────────────────────────────────────────────────────
+// Pure SVG / CSS — no chart library dependency. Designed to look passable
+// at a glance, not to win design awards. Each chart degrades gracefully
+// when there's no data (renders an empty-state message instead).
+
+// Reason segments rotate through this palette in order. Items don't get
+// individual colors (would be unstable as items come and go); they all
+// use the same cyan accent.
+const REASON_COLORS = [
+  "#22d3ee", // cyan-400
+  "#fb7185", // rose-400
+  "#fbbf24", // amber-400
+  "#34d399", // emerald-400
+  "#a78bfa", // violet-400
+  "#60a5fa", // blue-400
+  "#f472b6", // pink-400
+  "#facc15", // yellow-400
+];
+const colorForIndex = (i: number) => REASON_COLORS[i % REASON_COLORS.length];
+
+function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-5">
+      <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
+        {title}
+      </h3>
+      <div className="mt-4">{children}</div>
+    </div>
+  );
+}
+
+function LineChart({ data }: { data: Array<{ date: string; qty: number }> }) {
+  if (data.length === 0) {
+    return <p className="text-sm text-slate-500">No waste in this period.</p>;
+  }
+  const W = 600;
+  const H = 180;
+  const padL = 32;
+  const padR = 12;
+  const padT = 10;
+  const padB = 24;
+  const max = Math.max(1, ...data.map((d) => d.qty));
+  const xStep = data.length > 1 ? (W - padL - padR) / (data.length - 1) : 0;
+  const yFor = (q: number) => padT + (H - padT - padB) * (1 - q / max);
+  const points = data
+    .map((d, i) => `${padL + i * xStep},${yFor(d.qty)}`)
+    .join(" ");
+  // Up to 6 evenly spaced x-axis labels so they don't overlap.
+  const labelStep = Math.max(1, Math.ceil(data.length / 6));
+  return (
+    <div className="overflow-x-auto">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        className="w-full"
+        style={{ minWidth: 320, height: 200 }}
+      >
+        {/* y-axis grid */}
+        {[0, 0.5, 1].map((frac) => {
+          const y = padT + (H - padT - padB) * (1 - frac);
+          return (
+            <g key={frac}>
+              <line
+                x1={padL}
+                x2={W - padR}
+                y1={y}
+                y2={y}
+                stroke="rgb(51 65 85)"
+                strokeDasharray="2 3"
+              />
+              <text x={padL - 6} y={y + 4} textAnchor="end" fontSize="10" fill="#94a3b8">
+                {Math.round(max * frac)}
+              </text>
+            </g>
+          );
+        })}
+        <polyline
+          fill="none"
+          stroke="#22d3ee"
+          strokeWidth="2"
+          points={points}
+        />
+        {data.map((d, i) => (
+          <circle
+            key={d.date}
+            cx={padL + i * xStep}
+            cy={yFor(d.qty)}
+            r={d.qty > 0 ? 2.5 : 0}
+            fill="#22d3ee"
+          >
+            <title>{`${d.date}: ${d.qty}`}</title>
+          </circle>
+        ))}
+        {data.map((d, i) =>
+          i % labelStep === 0 || i === data.length - 1 ? (
+            <text
+              key={`l${d.date}`}
+              x={padL + i * xStep}
+              y={H - 6}
+              textAnchor="middle"
+              fontSize="10"
+              fill="#64748b"
+            >
+              {d.date.slice(5)}
+            </text>
+          ) : null,
+        )}
+      </svg>
+    </div>
+  );
+}
+
+function BarList({
+  rows,
+  max,
+  colorIndex = false,
+}: {
+  rows: AggRow[];
+  max: number;
+  // When true, each bar gets its own palette color (good for reasons);
+  // otherwise everything uses cyan (good for items).
+  colorIndex?: boolean;
+}) {
+  if (rows.length === 0) {
+    return <p className="text-sm text-slate-500">No waste in this period.</p>;
+  }
+  const shown = rows.slice(0, max);
+  const maxQty = Math.max(1, ...shown.map((r) => r.qty));
+  return (
+    <div className="space-y-2">
+      {shown.map((r, i) => {
+        const pct = (r.qty / maxQty) * 100;
+        const color = colorIndex ? colorForIndex(i) : "#22d3ee";
+        return (
+          <div key={r.key}>
+            <div className="flex items-baseline justify-between gap-2 text-xs text-slate-300">
+              <span className="truncate" title={r.label}>{r.label}</span>
+              <span className="font-semibold text-slate-200">{r.qty.toLocaleString()}</span>
+            </div>
+            <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-slate-950">
+              <div
+                className="h-full rounded-full"
+                style={{ width: `${pct}%`, backgroundColor: color }}
+              />
+            </div>
+          </div>
+        );
+      })}
+      {rows.length > max && (
+        <p className="text-xs text-slate-500">
+          + {rows.length - max} more (see full table below)
+        </p>
+      )}
+    </div>
+  );
+}
+
+function StackedItemBars({
+  rows,
+  reasons,
+  max,
+}: {
+  rows: Array<{ item_id: string; item_name: string; total: number; byReason: Map<string, number> }>;
+  reasons: string[];
+  max: number;
+}) {
+  if (rows.length === 0) {
+    return <p className="text-sm text-slate-500">No waste in this period.</p>;
+  }
+  const shown = rows.slice(0, max);
+  const maxTotal = Math.max(1, ...shown.map((r) => r.total));
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+        {reasons.map((r, i) => (
+          <span key={r} className="inline-flex items-center gap-1 text-slate-300">
+            <span
+              className="inline-block h-2 w-2 rounded-sm"
+              style={{ backgroundColor: colorForIndex(i) }}
+            />
+            {r}
+          </span>
+        ))}
+      </div>
+      <div className="space-y-2">
+        {shown.map((row) => {
+          const totalPct = (row.total / maxTotal) * 100;
+          return (
+            <div key={row.item_id}>
+              <div className="flex items-baseline justify-between gap-2 text-xs text-slate-300">
+                <span className="truncate" title={row.item_name}>{row.item_name}</span>
+                <span className="font-semibold text-slate-200">
+                  {row.total.toLocaleString()}
+                </span>
+              </div>
+              <div
+                className="mt-1 flex h-2.5 overflow-hidden rounded-full bg-slate-950"
+                style={{ width: `${totalPct}%` }}
+              >
+                {reasons.map((r, i) => {
+                  const q = row.byReason.get(r) ?? 0;
+                  if (q === 0) return null;
+                  const segPct = (q / row.total) * 100;
+                  return (
+                    <div
+                      key={r}
+                      style={{ width: `${segPct}%`, backgroundColor: colorForIndex(i) }}
+                      title={`${r}: ${q}`}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {rows.length > max && (
+        <p className="text-xs text-slate-500">+ {rows.length - max} more</p>
       )}
     </div>
   );
