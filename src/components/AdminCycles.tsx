@@ -1750,87 +1750,92 @@ function AllocationsTab({
       field: "qty",
       sortable: true,
       filter: true,
-      width: 170,
+      width: 160,
       // The Qty cell is the override edit affordance AND the override
-      // state indicator (Source column having been retired). A small
-      // pill before the number shows Manual / Hard / Pending; bold red
-      // + octagon still indicates an overdraft (hard override past
-      // factory stock).
+      // state indicator (Source column having been retired). When the
+      // row has an override, the whole cell renders as a single
+      // colored capsule containing both the state label and the qty so
+      // the visual stays unified rather than two separate pills.
       cellRenderer: (params: ICellRendererParams<AllocationRow>) => {
         const row = params.data;
         const value = (params.value as number | undefined) ?? 0;
         if (!row || readOnly) return <span>{value}</span>;
         const overdrawn = row.overdraft > 0;
 
-        // Choose at most one pill — overdraft is implied visually by
-        // the red number + octagon, so we suppress the "Hard" pill when
-        // an overdraft is present to avoid double-flagging.
-        let pill: { label: string; cls: string; title: string } | null = null;
-        if (row.override_pending) {
-          const suffix = row.override_mode === "hard" ? " · Hard" : "";
-          pill = {
-            label: `Pending${suffix}`,
-            cls: "bg-slate-500/20 text-slate-300",
+        // Pick the capsule style based on override state. `null` means
+        // no override — render the bare underlined number.
+        let capsule: {
+          label: string | null;
+          cls: string;
+          title: string;
+          icon?: boolean;
+        } | null = null;
+        if (overdrawn) {
+          capsule = {
+            label: "Hard",
+            cls: "bg-rose-500/15 text-rose-300 ring-1 ring-rose-500/30 hover:bg-rose-500/25",
+            title: `This is ${row.overdraft} more than the factory has. Click to edit.`,
+            icon: true,
+          };
+        } else if (row.override_pending) {
+          capsule = {
+            label: row.override_mode === "hard" ? "Pending · Hard" : "Pending",
+            cls: "bg-slate-500/15 text-slate-300 ring-1 ring-slate-500/30 hover:bg-slate-500/25",
             title: "Override hasn't been applied yet — re-run allocations.",
           };
         } else if (row.source === "manual_override" && !row.has_override) {
-          pill = {
+          capsule = {
             label: "Pending update",
-            cls: "bg-slate-500/20 text-slate-300",
+            cls: "bg-slate-500/15 text-slate-300 ring-1 ring-slate-500/30 hover:bg-slate-500/25",
             title: "Manual change was removed. Re-run allocations to refresh.",
           };
-        } else if (row.has_override && row.override_mode === "hard" && !overdrawn) {
-          pill = {
+        } else if (row.has_override && row.override_mode === "hard") {
+          capsule = {
             label: "Hard",
-            cls: "bg-rose-500/20 text-rose-300",
+            cls: "bg-rose-500/15 text-rose-300 ring-1 ring-rose-500/30 hover:bg-rose-500/25",
             title: "Hard manual override.",
           };
         } else if (row.has_override) {
-          pill = {
+          capsule = {
             label: "Manual",
-            cls: "bg-amber-500/20 text-amber-300",
+            cls: "bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30 hover:bg-amber-500/25",
             title: "Manual override.",
           };
         }
-
-        const numberCls = overdrawn
-          ? "inline-flex items-center gap-1 font-semibold text-red-400 hover:text-red-300"
-          : "underline decoration-dotted decoration-slate-500 underline-offset-4 hover:text-cyan-300 hover:decoration-cyan-300";
 
         return (
           <button
             type="button"
             onClick={() => openOverrideFor(row)}
-            title={
-              overdrawn
-                ? `This is ${row.overdraft} more than the factory has. Click to edit.`
-                : "Click to set a manual amount"
-            }
-            className="w-full h-full inline-flex items-center gap-2 text-left cursor-pointer"
+            title={capsule?.title ?? "Click to set a manual amount"}
+            className="h-full inline-flex items-center cursor-pointer align-middle"
           >
-            {pill && (
+            {capsule ? (
               <span
-                title={pill.title}
-                className={`inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold ${pill.cls}`}
+                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold transition ${capsule.cls}`}
               >
-                {pill.label}
+                {capsule.icon && (
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="h-3 w-3"
+                    aria-hidden="true"
+                  >
+                    <polygon
+                      points="7,2 17,2 22,7 22,17 17,22 7,22 2,17 2,7"
+                      fill="currentColor"
+                    />
+                  </svg>
+                )}
+                <span className="uppercase tracking-wide text-[10px] opacity-80">
+                  {capsule.label}
+                </span>
+                <span className="tabular-nums">{value}</span>
+              </span>
+            ) : (
+              <span className="underline decoration-dotted decoration-slate-500 underline-offset-4 hover:text-cyan-300 hover:decoration-cyan-300 tabular-nums">
+                {value}
               </span>
             )}
-            <span className={numberCls}>
-              {overdrawn && (
-                <svg
-                  viewBox="0 0 24 24"
-                  className="h-3 w-3 text-red-400"
-                  aria-hidden="true"
-                >
-                  <polygon
-                    points="7,2 17,2 22,7 22,17 17,22 7,22 2,17 2,7"
-                    fill="currentColor"
-                  />
-                </svg>
-              )}
-              {value}
-            </span>
           </button>
         );
       },
