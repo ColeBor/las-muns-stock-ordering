@@ -1835,7 +1835,6 @@ function AllocationsTab({
         );
       },
     },
-    { headerName: "Factory", field: "factory_name", sortable: true, filter: true, width: 150 },
     {
       headerName: "Deficit",
       field: "shortfall",
@@ -1867,6 +1866,16 @@ function AllocationsTab({
         }
         return <span className="text-emerald-400">0</span>;
       },
+    },
+    {
+      headerName: "Supplier",
+      field: "supplier_name",
+      sortable: true,
+      filter: true,
+      width: 160,
+      // null supplier means we make it in-house. Show "Manufactured" for
+      // those rows so the column is never blank.
+      valueFormatter: (p) => (p.value as string | null) ?? "Manufactured",
     },
     {
       headerName: "Reason",
