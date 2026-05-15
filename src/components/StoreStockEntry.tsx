@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
 import { formatLocalDate, parseLocalDate } from "@/lib/dateOnly";
@@ -251,16 +251,26 @@ export default function StoreStockEntry() {
 
   // Lazy-fetch stock entries scoped to (cycle, store) only — no embed,
   // no cross-cycle data. Refetched whenever the selection changes.
+  // Drop stale responses — realtime can fire multiple events per write
+  // and the responses can arrive out of order, otherwise letting an
+  // older empty result clobber the latest state.
+  const entriesTokenRef = useRef(0);
   const loadEntries = useCallback(async () => {
     if (!selectedCycleId || !effectiveStoreId) {
       setEntries([]);
       return;
     }
-    const { data } = await supabase
+    const myToken = ++entriesTokenRef.current;
+    const { data, error } = await supabase
       .from("stock_entries")
       .select("cycle_id,store_id,item_id,current_count,entered_at")
       .eq("cycle_id", selectedCycleId)
       .eq("store_id", effectiveStoreId);
+    if (myToken !== entriesTokenRef.current) return;
+    if (error) {
+      // eslint-disable-next-line no-console
+      console.error("StoreStockEntry loadEntries failed:", error);
+    }
     if (data) setEntries(data as StockEntry[]);
   }, [selectedCycleId, effectiveStoreId]);
 

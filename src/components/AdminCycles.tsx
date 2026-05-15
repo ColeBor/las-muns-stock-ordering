@@ -687,14 +687,22 @@ function CountsTab({
 
 function StockEntriesTab({ cycleId }: { cycleId: string }) {
   const [rows, setRows] = useState<StockEntryRow[]>([]);
+  // Drop stale responses so racing realtime events can't clobber state.
+  const loadTokenRef = useRef(0);
   const load = useCallback(async () => {
-    const { data } = await supabase
+    const myToken = ++loadTokenRef.current;
+    const { data, error } = await supabase
       .from("stock_entries")
       .select(
         "current_count,entered_at,stores(name),items(name,type,sub_category)",
       )
       .eq("cycle_id", cycleId)
       .order("entered_at", { ascending: false });
+    if (myToken !== loadTokenRef.current) return;
+    if (error) {
+      // eslint-disable-next-line no-console
+      console.error("StockEntriesTab load failed:", error);
+    }
     if (data) {
       setRows(
         (data as unknown as Array<{
@@ -804,14 +812,22 @@ type FactoryCountRow = {
 
 function FactoryCountsTab({ cycleId }: { cycleId: string }) {
   const [rows, setRows] = useState<FactoryCountRow[]>([]);
+  // Drop stale responses so racing realtime events can't clobber state.
+  const loadTokenRef = useRef(0);
   const load = useCallback(async () => {
-    const { data } = await supabase
+    const myToken = ++loadTokenRef.current;
+    const { data, error } = await supabase
       .from("factory_counts")
       .select(
         "available_qty,counted_at,factories(name),items(name,sub_category)",
       )
       .eq("cycle_id", cycleId)
       .order("counted_at", { ascending: false });
+    if (myToken !== loadTokenRef.current) return;
+    if (error) {
+      // eslint-disable-next-line no-console
+      console.error("FactoryCountsTab load failed:", error);
+    }
     if (data) {
       setRows(
         (data as unknown as Array<{
@@ -921,8 +937,11 @@ type PreviewRow = {
 
 function PreviewTab({ cycleId }: { cycleId: string }) {
   const [rows, setRows] = useState<PreviewRow[]>([]);
+  // Drop stale responses so racing realtime events can't clobber state.
+  const loadTokenRef = useRef(0);
 
   const load = useCallback(async () => {
+    const myToken = ++loadTokenRef.current;
     const [
       cycleStoresRes,
       stockEntriesRes,
@@ -950,6 +969,8 @@ function PreviewTab({ cycleId }: { cycleId: string }) {
         .select("store_id,item_id,qty,mode")
         .eq("cycle_id", cycleId),
     ]);
+
+    if (myToken !== loadTokenRef.current) return; // stale, ignore
 
     if (
       !cycleStoresRes.data ||
@@ -1339,7 +1360,16 @@ function AllocationsTab({
   const patchDraft = (patch: Partial<OverrideDraft>) =>
     setOverrideDraft((prev) => ({ ...prev, ...patch }));
 
+  // Realtime fires once per row change. Run Allocations does DELETE +
+  // INSERT, so two reloads kick off in quick succession; if the
+  // DELETE-triggered fetch resolves *after* the INSERT-triggered fetch
+  // (network ordering isn't guaranteed) the empty result clobbers the
+  // populated one and the grid goes blank. Tag every reload with a
+  // monotonically increasing token and ignore any response whose token
+  // is no longer the latest.
+  const reloadTokenRef = useRef(0);
   const reload = useCallback(async () => {
+    const myToken = ++reloadTokenRef.current;
     const [allocRes, overrideRes, storesRes, itemsRes] = await Promise.all([
       supabase
         .from("allocations")
@@ -1357,6 +1387,13 @@ function AllocationsTab({
         .select("id,name,suppliers(name)")
         .order("name"),
     ]);
+
+    if (myToken !== reloadTokenRef.current) return; // stale, ignore
+
+    if (allocRes.error) {
+      // eslint-disable-next-line no-console
+      console.error("AllocationsTab reload failed:", allocRes.error);
+    }
 
     if (storesRes.data) setStores(storesRes.data);
     if (itemsRes.data) {
@@ -2179,13 +2216,21 @@ function DeliveriesTab({
   const [marking, setMarking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
+  // Drop stale responses — see AllocationsTab.reload for the rationale.
+  const reloadTokenRef = useRef(0);
   const reload = useCallback(async () => {
-    const { data } = await supabase
+    const myToken = ++reloadTokenRef.current;
+    const { data, error } = await supabase
       .from("allocations")
       .select(
         "cycle_id,store_id,item_id,qty,factory_id,stores(name),items(name,type,sub_category)",
       )
       .eq("cycle_id", cycleId);
+    if (myToken !== reloadTokenRef.current) return;
+    if (error) {
+      // eslint-disable-next-line no-console
+      console.error("DeliveriesTab reload failed:", error);
+    }
     if (data) setAllocations(data as unknown as DeliveryAllocation[]);
   }, [cycleId]);
 

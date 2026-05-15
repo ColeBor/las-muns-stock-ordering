@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { formatLocalDate } from "@/lib/dateOnly";
 import { useAuthGate } from "@/lib/useAuthGate";
@@ -170,16 +170,26 @@ export default function FactoryStock() {
   // so factory workers can keep counts up to date even when no cycle is
   // active. In master view we pull every factory's rows so the grid can
   // sum across them.
+  // Drop stale responses — realtime fires multiple events per write
+  // and the responses can arrive out of order, which otherwise lets an
+  // older (empty) result clobber the latest state.
+  const inventoryTokenRef = useRef(0);
   const loadInventory = useCallback(async () => {
     if (!canManage || !effectiveFactoryId) {
       setInventory([]);
       return;
     }
+    const myToken = ++inventoryTokenRef.current;
     const q = supabase
       .from("factory_inventory")
       .select("factory_id,item_id,on_hand_qty,last_counted_at");
     if (!isMasterView) q.eq("factory_id", effectiveFactoryId);
-    const { data } = await q;
+    const { data, error } = await q;
+    if (myToken !== inventoryTokenRef.current) return;
+    if (error) {
+      // eslint-disable-next-line no-console
+      console.error("FactoryStock loadInventory failed:", error);
+    }
     if (data) setInventory(data as FactoryInventoryRow[]);
   }, [canManage, effectiveFactoryId, isMasterView]);
 
@@ -197,12 +207,14 @@ export default function FactoryStock() {
 
   // Per-cycle context (allocations + production alerts) — optional. Empty
   // when no cycle is selected; the grid just hides those numbers.
+  const cycleScopedTokenRef = useRef(0);
   const loadCycleScoped = useCallback(async () => {
     if (!canManage || !effectiveFactoryId || !selectedCycleId) {
       setAllocations([]);
       setProductionAlerts([]);
       return;
     }
+    const myToken = ++cycleScopedTokenRef.current;
     const allocationsQuery = supabase
       .from("allocation_factories")
       .select("cycle_id,store_id,item_id,qty,factory_id")
@@ -221,6 +233,7 @@ export default function FactoryStock() {
       allocationsQuery,
       alertsQuery ?? Promise.resolve({ data: null }),
     ]);
+    if (myToken !== cycleScopedTokenRef.current) return;
     if (allocationsResponse.data) {
       setAllocations(allocationsResponse.data as AllocationFactory[]);
     }
