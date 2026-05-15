@@ -87,11 +87,18 @@ export default function AdminCycles() {
 
   const canManage = isStoreManager;
 
+  // Drop stale responses — deleting a cycle fires both order_cycles AND
+  // cycle_stores realtime events (cascade delete), so two reloadCycles
+  // run in parallel; without a guard a slower one can land last with
+  // stale data and the cycle "comes back" in the UI.
+  const reloadCyclesTokenRef = useRef(0);
   const reloadCycles = useCallback(async () => {
+    const myToken = ++reloadCyclesTokenRef.current;
     const { data } = await supabase
       .from("order_cycles")
       .select("*, cycle_stores(stores(id, name))")
       .order("created_at", { ascending: false });
+    if (myToken !== reloadCyclesTokenRef.current) return;
     if (!data) return;
     // Active cycles (draft / allocated) first, delivered (archived) last.
     const sorted = [...(data as OrderCycle[])].sort((a, b) => {

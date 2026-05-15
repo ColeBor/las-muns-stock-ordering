@@ -311,6 +311,16 @@ export default function StoreStockEntry() {
   // order_date is closest to today AND not delivered AND not more than a
   // year out (so stray test cycles with far-future dates don't trap
   // employees into entering counts on the wrong cycle).
+  // If the currently-selected cycle disappears (e.g. HQ deleted a
+  // draft), clear the selection so the worker can't keep typing into
+  // a cycle that no longer exists (which produced the "permanently
+  // saving" hang).
+  useEffect(() => {
+    if (selectedCycleId && !cycles.some((c) => c.id === selectedCycleId)) {
+      setSelectedCycleId("");
+    }
+  }, [cycles, selectedCycleId]);
+
   useEffect(() => {
     if (cycles.length === 0 || selectedCycleId) return;
     const oneYearOut = new Date();
