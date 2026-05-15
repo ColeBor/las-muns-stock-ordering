@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
 import BackButton from "./BackButton";
+import StorePicker from "./StorePicker";
 
 // Cached role key shared with HomeAdminLinks so we don't double-fetch the
 // profile across the layout. See migration 20260513140000_role_terminology_rename.
@@ -314,6 +315,8 @@ export default function PageShellNav() {
       <Link href="/" className={PILL_CLASS}>
         <span aria-hidden>⌂</span> Home
       </Link>
+      <StorePicker />
+
       {links.map((l) => {
         const alert = alertFor(l.href);
         if (alert.show) {

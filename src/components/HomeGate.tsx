@@ -7,6 +7,7 @@ import { useAuthGate } from "@/lib/useAuthGate";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
 import SupabaseAuth from "./SupabaseAuth";
 import HomeAdminLinks from "./HomeAdminLinks";
+import StorePicker from "./StorePicker";
 
 const REQUESTS_LAST_SEEN_KEY = "lm-requests-last-seen";
 
@@ -215,6 +216,7 @@ export default function HomeGate() {
                 <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
                   Las Muns
                 </h1>
+                <StorePicker />
               </div>
 
               <div className="space-y-4">

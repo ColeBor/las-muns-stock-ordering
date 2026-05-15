@@ -50,6 +50,9 @@ export default function SupabaseAuth() {
   const [allProfiles, setAllProfiles] = useState<Profile[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
   const [factories, setFactories] = useState<Factory[]>([]);
+  // Map of userId → list of store ids assigned to that user. Drives the
+  // multi-store checkboxes in the admin profile editor.
+  const [profileStoresByUser, setProfileStoresByUser] = useState<Record<string, string[]>>({});
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [usePassword, setUsePassword] = useState(true);
@@ -146,10 +149,11 @@ export default function SupabaseAuth() {
     }
 
     const loadAdminData = async () => {
-      const [storesRes, factoriesRes, profilesRes] = await Promise.all([
+      const [storesRes, factoriesRes, profilesRes, psRes] = await Promise.all([
         supabase.from("stores").select("id,name").order("name"),
         supabase.from("factories").select("id,name").order("name"),
         supabase.from("profiles").select("id,email,display_name,role,store_id,factory_id"),
+        supabase.from("profile_stores").select("user_id,store_id"),
       ]);
 
       if (!storesRes.error && storesRes.data) {
@@ -163,10 +167,89 @@ export default function SupabaseAuth() {
       if (!profilesRes.error && profilesRes.data) {
         setAllProfiles(profilesRes.data as Profile[]);
       }
+
+      if (!psRes.error && psRes.data) {
+        const map: Record<string, string[]> = {};
+        for (const row of psRes.data as Array<{ user_id: string; store_id: string }>) {
+          (map[row.user_id] ??= []).push(row.store_id);
+        }
+        setProfileStoresByUser(map);
+      }
     };
 
     loadAdminData();
   }, [isStoreManager]);
+
+  // Toggle a single store assignment for a user. If the user has no active
+  // store_id yet, default it to the just-added store; if the toggled-off
+  // store was their active one, swap to the first remaining (or null).
+  const toggleStoreAssignment = async (
+    userId: string,
+    storeId: string,
+    currentlyAssigned: boolean,
+  ) => {
+    setAdminLoading(true);
+    setAdminMessage(null);
+
+    if (currentlyAssigned) {
+      const { error } = await supabase
+        .from("profile_stores")
+        .delete()
+        .eq("user_id", userId)
+        .eq("store_id", storeId);
+      if (error) {
+        setAdminLoading(false);
+        setAdminMessage(error.message);
+        return;
+      }
+    } else {
+      const { error } = await supabase
+        .from("profile_stores")
+        .insert([{ user_id: userId, store_id: storeId }]);
+      if (error) {
+        setAdminLoading(false);
+        setAdminMessage(error.message);
+        return;
+      }
+    }
+
+    // Keep profiles.store_id consistent with the new assignment set.
+    const user = allProfiles.find((p) => p.id === userId);
+    const newAssigned = currentlyAssigned
+      ? (profileStoresByUser[userId] ?? []).filter((s) => s !== storeId)
+      : [...(profileStoresByUser[userId] ?? []), storeId];
+    let newActive: string | null = user?.store_id ?? null;
+    if (newActive && !newAssigned.includes(newActive)) {
+      newActive = newAssigned[0] ?? null;
+    } else if (!newActive && newAssigned.length > 0) {
+      newActive = newAssigned[0];
+    }
+    if (newActive !== (user?.store_id ?? null)) {
+      await supabase
+        .from("profiles")
+        .update({ store_id: newActive })
+        .eq("id", userId);
+    }
+
+    // Reload admin data for fresh state.
+    const [profilesRes, psRes] = await Promise.all([
+      supabase.from("profiles").select("id,email,display_name,role,store_id,factory_id"),
+      supabase.from("profile_stores").select("user_id,store_id"),
+    ]);
+    if (!profilesRes.error && profilesRes.data) {
+      setAllProfiles(profilesRes.data as Profile[]);
+    }
+    if (!psRes.error && psRes.data) {
+      const map: Record<string, string[]> = {};
+      for (const row of psRes.data as Array<{ user_id: string; store_id: string }>) {
+        (map[row.user_id] ??= []).push(row.store_id);
+      }
+      setProfileStoresByUser(map);
+    }
+
+    setAdminLoading(false);
+    setAdminMessage("Assignment updated.");
+  };
 
   const signInWithPassword = async (event: FormEvent) => {
     event.preventDefault();
@@ -376,29 +459,53 @@ export default function SupabaseAuth() {
                               <option value="factory_worker">Factory Worker</option>
                             </select>
 
-                            {userProfile.role === "employee" && (
-                              <>
-                                <label className="block text-xs font-medium text-slate-400">
-                                  Assigned store
-                                </label>
-                                <select
-                                  value={userProfile.store_id ?? ""}
-                                  onChange={(event) =>
-                                    updateProfile(userProfile.id, {
-                                      store_id: event.target.value || null,
-                                    })
-                                  }
-                                  className="rounded-full border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none"
-                                >
-                                  <option value="">Unassigned store</option>
-                                  {stores.map((store) => (
-                                    <option key={store.id} value={store.id}>
-                                      {store.name}
-                                    </option>
-                                  ))}
-                                </select>
-                              </>
-                            )}
+                            {userProfile.role === "employee" && (() => {
+                              const assigned = profileStoresByUser[userProfile.id] ?? [];
+                              return (
+                                <>
+                                  <label className="block text-xs font-medium text-slate-400">
+                                    Assigned stores
+                                  </label>
+                                  <div className="flex flex-wrap gap-2">
+                                    {stores.length === 0 ? (
+                                      <span className="text-xs text-slate-500">
+                                        No stores yet — create one under Directory.
+                                      </span>
+                                    ) : (
+                                      stores.map((store) => {
+                                        const selected = assigned.includes(store.id);
+                                        return (
+                                          <button
+                                            key={store.id}
+                                            type="button"
+                                            disabled={adminLoading}
+                                            onClick={() =>
+                                              toggleStoreAssignment(
+                                                userProfile.id,
+                                                store.id,
+                                                selected,
+                                              )
+                                            }
+                                            className={`rounded-full px-3 py-1 text-xs font-semibold transition disabled:opacity-50 ${
+                                              selected
+                                                ? "bg-cyan-500 text-slate-950"
+                                                : "bg-slate-800 text-slate-200 hover:bg-slate-700"
+                                            }`}
+                                          >
+                                            {selected ? "✓ " : ""}{store.name}
+                                          </button>
+                                        );
+                                      })
+                                    )}
+                                  </div>
+                                  {assigned.length > 1 && (
+                                    <p className="mt-1 text-xs text-slate-500">
+                                      Active store: {stores.find((s) => s.id === userProfile.store_id)?.name ?? "(none)"}. The worker picks which one they're at via the Store dropdown on their nav.
+                                    </p>
+                                  )}
+                                </>
+                              );
+                            })()}
 
                             {userProfile.role === "factory_worker" && (
                               <>
