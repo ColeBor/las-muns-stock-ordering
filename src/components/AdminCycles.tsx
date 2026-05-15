@@ -1270,6 +1270,9 @@ type AllocationRecord = {
   store_name: string;
   item_name: string;
   sub_category: string | null;
+  // null supplier name → manufactured in-house (we make it). Drives the
+  // master sort grouping in the Allocations grid.
+  supplier_name: string | null;
   qty: number;
   source: string;
   factory_name: string;
@@ -1315,7 +1318,9 @@ function AllocationsTab({
   const [allocations, setAllocations] = useState<AllocationRecord[]>([]);
   const [overrides, setOverrides] = useState<OverrideRecord[]>([]);
   const [stores, setStores] = useState<Array<{ id: string; name: string }>>([]);
-  const [items, setItems] = useState<Array<{ id: string; name: string }>>([]);
+  const [items, setItems] = useState<
+    Array<{ id: string; name: string; supplier_name: string | null }>
+  >([]);
   const [running, setRunning] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [formLoading, setFormLoading] = useState(false);
@@ -1339,7 +1344,7 @@ function AllocationsTab({
       supabase
         .from("allocations")
         .select(
-          "store_id,item_id,qty,source,shortfall,overdraft,stores(name),items(name,sub_category),factories!allocations_factory_id_fkey(name)",
+          "store_id,item_id,qty,source,shortfall,overdraft,stores(name),items(name,sub_category,suppliers(name)),factories!allocations_factory_id_fkey(name)",
         )
         .eq("cycle_id", cycleId),
       supabase
@@ -1347,11 +1352,26 @@ function AllocationsTab({
         .select("store_id,item_id,qty,reason,mode")
         .eq("cycle_id", cycleId),
       supabase.from("stores").select("id,name").order("name"),
-      supabase.from("items").select("id,name").order("name"),
+      supabase
+        .from("items")
+        .select("id,name,suppliers(name)")
+        .order("name"),
     ]);
 
     if (storesRes.data) setStores(storesRes.data);
-    if (itemsRes.data) setItems(itemsRes.data);
+    if (itemsRes.data) {
+      setItems(
+        (itemsRes.data as unknown as Array<{
+          id: string;
+          name: string;
+          suppliers: { name: string } | null;
+        }>).map((i) => ({
+          id: i.id,
+          name: i.name,
+          supplier_name: i.suppliers?.name ?? null,
+        })),
+      );
+    }
     if (overrideRes.data) setOverrides(overrideRes.data as OverrideRecord[]);
     if (allocRes.data) {
       setAllocations(
@@ -1363,7 +1383,11 @@ function AllocationsTab({
           shortfall: number;
           overdraft: number | null;
           stores: { name: string } | null;
-          items: { name: string; sub_category: string | null } | null;
+          items: {
+            name: string;
+            sub_category: string | null;
+            suppliers: { name: string } | null;
+          } | null;
           factories: { name: string } | null;
         }>).map((a) => ({
           store_id: a.store_id,
@@ -1371,6 +1395,7 @@ function AllocationsTab({
           store_name: a.stores?.name ?? "",
           item_name: a.items?.name ?? "",
           sub_category: a.items?.sub_category ?? null,
+          supplier_name: a.items?.suppliers?.name ?? null,
           qty: a.qty,
           source: a.source,
           factory_name: a.factories?.name ?? "",
@@ -1406,6 +1431,10 @@ function AllocationsTab({
   );
   const itemNameById = useMemo(
     () => new Map(items.map((i) => [i.id, i.name])),
+    [items],
+  );
+  const supplierNameByItem = useMemo(
+    () => new Map(items.map((i) => [i.id, i.supplier_name])),
     [items],
   );
 
@@ -1453,6 +1482,7 @@ function AllocationsTab({
           store_name: storeNameById.get(o.store_id) ?? o.store_id,
           item_name: itemNameById.get(o.item_id) ?? o.item_id,
           sub_category: null,
+          supplier_name: supplierNameByItem.get(o.item_id) ?? null,
           qty: o.qty,
           source: "pending_override",
           factory_name: "",
@@ -1466,12 +1496,19 @@ function AllocationsTab({
       }
     });
 
-    return merged.sort((x, y) =>
-      x.store_name.localeCompare(y.store_name) ||
-      x.source.localeCompare(y.source) ||
-      (x.sub_category ?? "").localeCompare(y.sub_category ?? ""),
+    // Master sort: Store → Supplier (Manufactured first, then alpha by
+    // supplier name) → Category → Item. The empty-string prefix on
+    // Manufactured guarantees it sorts before any real supplier name.
+    const supplierSortKey = (s: string | null) =>
+      s === null ? "" : `1:${s}`;
+    return merged.sort(
+      (x, y) =>
+        x.store_name.localeCompare(y.store_name) ||
+        supplierSortKey(x.supplier_name).localeCompare(supplierSortKey(y.supplier_name)) ||
+        (x.sub_category ?? "").localeCompare(y.sub_category ?? "") ||
+        x.item_name.localeCompare(y.item_name),
     );
-  }, [allocations, overrides, overrideByKey, storeNameById, itemNameById]);
+  }, [allocations, overrides, overrideByKey, storeNameById, itemNameById, supplierNameByItem]);
 
   // External filter hooks for the chip bar above the grid. AG Grid
   // captures these function refs at mount and doesn't always pick up
@@ -1701,57 +1738,6 @@ function AllocationsTab({
       width: 150,
     },
     {
-      headerName: "Source",
-      field: "source",
-      sortable: true,
-      filter: true,
-      width: 195,
-      cellRenderer: (params: ICellRendererParams<AllocationRow>) => {
-        const row = params.data;
-        const v = (params.value as string | undefined) ?? "";
-        if (!row || !v) return "";
-        const spaced = v.replace(/_/g, " ");
-        const label = spaced.charAt(0).toUpperCase() + spaced.slice(1);
-
-        // Source chips are visual-only — overrides are edited via the
-        // clickable Qty cell.
-        if (row.override_pending) {
-          const modeSuffix = row.override_mode === "hard" ? " · Hard" : "";
-          return (
-            <span className="inline-flex items-center whitespace-nowrap rounded-full bg-slate-500/20 px-2 py-0.5 text-xs font-semibold text-slate-300">
-              Pending Override{modeSuffix}
-            </span>
-          );
-        }
-        if (v === "manual_override") {
-          if (!row.has_override) {
-            return (
-              <span
-                className="inline-flex items-center rounded-full bg-slate-500/20 px-2 py-0.5 text-xs font-semibold text-slate-300"
-                title="Manual change was removed. Re-run allocations to refresh this row."
-              >
-                Pending Update
-              </span>
-            );
-          }
-          const isHard = row.override_mode === "hard";
-          return (
-            <span
-              className={
-                "inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold " +
-                (isHard
-                  ? "bg-rose-500/20 text-rose-300"
-                  : "bg-amber-500/20 text-amber-300")
-              }
-            >
-              {isHard ? "Manual Override · Hard" : "Manual Override"}
-            </span>
-          );
-        }
-        return label;
-      },
-    },
-    {
       headerName: "Category",
       field: "sub_category",
       sortable: true,
@@ -1764,18 +1750,53 @@ function AllocationsTab({
       field: "qty",
       sortable: true,
       filter: true,
-      width: 95,
-      // Clicking the qty opens the override form pre-filled with this
-      // row's store/item/qty. When a hard override has pushed the qty
-      // past available factory stock (overdraft > 0), the qty itself is
-      // the thing that's "wrong" — render it in bold red with the
-      // octagon icon so the visual alarm sits on the qty, not the
-      // downstream deficit.
+      width: 170,
+      // The Qty cell is the override edit affordance AND the override
+      // state indicator (Source column having been retired). A small
+      // pill before the number shows Manual / Hard / Pending; bold red
+      // + octagon still indicates an overdraft (hard override past
+      // factory stock).
       cellRenderer: (params: ICellRendererParams<AllocationRow>) => {
         const row = params.data;
         const value = (params.value as number | undefined) ?? 0;
         if (!row || readOnly) return <span>{value}</span>;
         const overdrawn = row.overdraft > 0;
+
+        // Choose at most one pill — overdraft is implied visually by
+        // the red number + octagon, so we suppress the "Hard" pill when
+        // an overdraft is present to avoid double-flagging.
+        let pill: { label: string; cls: string; title: string } | null = null;
+        if (row.override_pending) {
+          const suffix = row.override_mode === "hard" ? " · Hard" : "";
+          pill = {
+            label: `Pending${suffix}`,
+            cls: "bg-slate-500/20 text-slate-300",
+            title: "Override hasn't been applied yet — re-run allocations.",
+          };
+        } else if (row.source === "manual_override" && !row.has_override) {
+          pill = {
+            label: "Pending update",
+            cls: "bg-slate-500/20 text-slate-300",
+            title: "Manual change was removed. Re-run allocations to refresh.",
+          };
+        } else if (row.has_override && row.override_mode === "hard" && !overdrawn) {
+          pill = {
+            label: "Hard",
+            cls: "bg-rose-500/20 text-rose-300",
+            title: "Hard manual override.",
+          };
+        } else if (row.has_override) {
+          pill = {
+            label: "Manual",
+            cls: "bg-amber-500/20 text-amber-300",
+            title: "Manual override.",
+          };
+        }
+
+        const numberCls = overdrawn
+          ? "inline-flex items-center gap-1 font-semibold text-red-400 hover:text-red-300"
+          : "underline decoration-dotted decoration-slate-500 underline-offset-4 hover:text-cyan-300 hover:decoration-cyan-300";
+
         return (
           <button
             type="button"
@@ -1785,26 +1806,31 @@ function AllocationsTab({
                 ? `This is ${row.overdraft} more than the factory has. Click to edit.`
                 : "Click to set a manual amount"
             }
-            className={
-              "w-full h-full text-left cursor-pointer " +
-              (overdrawn
-                ? "inline-flex items-center gap-1 font-semibold text-red-400 hover:text-red-300"
-                : "underline decoration-dotted decoration-slate-500 underline-offset-4 hover:text-cyan-300 hover:decoration-cyan-300")
-            }
+            className="w-full h-full inline-flex items-center gap-2 text-left cursor-pointer"
           >
-            {overdrawn && (
-              <svg
-                viewBox="0 0 24 24"
-                className="h-3 w-3 text-red-400"
-                aria-hidden="true"
+            {pill && (
+              <span
+                title={pill.title}
+                className={`inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold ${pill.cls}`}
               >
-                <polygon
-                  points="7,2 17,2 22,7 22,17 17,22 7,22 2,17 2,7"
-                  fill="currentColor"
-                />
-              </svg>
+                {pill.label}
+              </span>
             )}
-            {value}
+            <span className={numberCls}>
+              {overdrawn && (
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-3 w-3 text-red-400"
+                  aria-hidden="true"
+                >
+                  <polygon
+                    points="7,2 17,2 22,7 22,17 17,22 7,22 2,17 2,7"
+                    fill="currentColor"
+                  />
+                </svg>
+              )}
+              {value}
+            </span>
           </button>
         );
       },
