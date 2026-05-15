@@ -15,7 +15,7 @@ type Store = {
   created_at: string;
 };
 
-type TabKey = "details" | "items" | "factories";
+type TabKey = "details" | "items";
 
 export default function AdminStores({
   viewSelector,
@@ -228,7 +228,7 @@ export default function AdminStores({
               </div>
 
               <div className="flex gap-2 border-b border-white/10 mb-4">
-                {(["details", "items", "factories"] as TabKey[]).map((tab) => (
+                {(["details", "items"] as TabKey[]).map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setActiveTab(tab)}
@@ -238,7 +238,7 @@ export default function AdminStores({
                         : "border-transparent text-slate-400 hover:text-slate-200"
                     }`}
                   >
-                    {tab === "details" ? "Details" : tab === "items" ? "Items & Capacity" : "Factory Priorities"}
+                    {tab === "details" ? "Details" : "Items & Capacity"}
                   </button>
                 ))}
               </div>
@@ -258,7 +258,6 @@ export default function AdminStores({
                 />
               )}
               {activeTab === "items" && <StoreItemsTab storeId={selectedStore.id} />}
-              {activeTab === "factories" && <StoreFactoriesTab storeId={selectedStore.id} />}
             </div>
           )}
         </div>
@@ -516,189 +515,3 @@ function StoreItemsTab({ storeId }: { storeId: string }) {
   );
 }
 
-type Factory = {
-  id: string;
-  name: string;
-  location: string | null;
-};
-
-type StoreFactoryRow = {
-  factory_id: string;
-  factory_name: string;
-  location: string | null;
-  priority: number;
-};
-
-function StoreFactoriesTab({ storeId }: { storeId: string }) {
-  const [allFactories, setAllFactories] = useState<Factory[]>([]);
-  const [storeFactories, setStoreFactories] = useState<{ factory_id: string; priority: number }[]>([]);
-  const [addFactoryId, setAddFactoryId] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-
-  const reload = async () => {
-    const [factoriesRes, sfRes] = await Promise.all([
-      supabase.from("factories").select("id,name,location").order("name"),
-      supabase
-        .from("store_factories")
-        .select("factory_id,priority")
-        .eq("store_id", storeId)
-        .order("priority"),
-    ]);
-    if (factoriesRes.data) setAllFactories(factoriesRes.data as Factory[]);
-    if (sfRes.data) setStoreFactories(sfRes.data);
-  };
-
-  useEffect(() => {
-    reload();
-  }, [storeId]);
-
-  const factoriesById = useMemo(
-    () => new Map(allFactories.map((f) => [f.id, f])),
-    [allFactories],
-  );
-
-  const rows: StoreFactoryRow[] = useMemo(
-    () =>
-      storeFactories.map((sf) => {
-        const f = factoriesById.get(sf.factory_id);
-        return {
-          factory_id: sf.factory_id,
-          factory_name: f?.name ?? sf.factory_id,
-          location: f?.location ?? null,
-          priority: sf.priority,
-        };
-      }),
-    [storeFactories, factoriesById],
-  );
-
-  const availableFactories = useMemo(
-    () =>
-      allFactories.filter((f) => !storeFactories.some((sf) => sf.factory_id === f.id)),
-    [allFactories, storeFactories],
-  );
-
-  const nextPriority = useMemo(() => {
-    const used = storeFactories.map((sf) => sf.priority).sort((a, b) => a - b);
-    let p = 1;
-    for (const prio of used) {
-      if (prio === p) p++;
-      else break;
-    }
-    return p;
-  }, [storeFactories]);
-
-  const addFactory = async () => {
-    if (!addFactoryId) return;
-    setLoading(true);
-    setMessage(null);
-    const { error } = await supabase
-      .from("store_factories")
-      .insert({ store_id: storeId, factory_id: addFactoryId, priority: nextPriority });
-    setAddFactoryId("");
-    await reload();
-    setLoading(false);
-    setMessage(error ? error.message : "Factory added.");
-  };
-
-  const removeFactory = async (factoryId: string) => {
-    if (!confirm("Remove this factory from the store?")) return;
-    setLoading(true);
-    const { error } = await supabase
-      .from("store_factories")
-      .delete()
-      .eq("store_id", storeId)
-      .eq("factory_id", factoryId);
-    await reload();
-    setLoading(false);
-    setMessage(error ? error.message : "Factory removed.");
-  };
-
-  const setPriority = async (factoryId: string, priority: number) => {
-    setLoading(true);
-    const { error } = await supabase
-      .from("store_factories")
-      .update({ priority })
-      .eq("store_id", storeId)
-      .eq("factory_id", factoryId);
-    await reload();
-    setLoading(false);
-    setMessage(error ? error.message : "Priority updated.");
-  };
-
-  const columnDefs: ColDef<StoreFactoryRow>[] = [
-    { headerName: "Factory", field: "factory_name", sortable: true, filter: true, flex: 2, minWidth: 150 },
-    { headerName: "Location", field: "location", sortable: true, filter: true, flex: 2, minWidth: 130 },
-    {
-      headerName: "Priority",
-      field: "priority",
-      width: 100,
-      editable: true,
-      cellEditor: "agNumberCellEditor",
-      cellEditorParams: { min: 1 },
-      onCellValueChanged: (params) => {
-        if (params.newValue !== params.oldValue) {
-          setPriority(params.data.factory_id, params.newValue);
-        }
-      },
-    },
-    {
-      headerName: "Actions",
-      width: 120,
-      cellRenderer: (params: ICellRendererParams<StoreFactoryRow>) => (
-        <div className="flex h-full items-center justify-center gap-2">
-          <button
-            onClick={() => removeFactory(params.data!.factory_id)}
-            className="px-2 py-1 text-xs bg-red-500 text-white rounded"
-            disabled={loading}
-          >
-            Remove
-          </button>
-        </div>
-      ),
-    },
-  ];
-
-  return (
-    <div className="space-y-4">
-      <p className="text-sm text-slate-400">
-        Order which factory ships first when multiple can supply this store.
-      </p>
-
-      <div className="flex items-center gap-2 rounded-2xl bg-slate-950/60 p-4">
-        <select
-          value={addFactoryId}
-          onChange={(e) => setAddFactoryId(e.target.value)}
-          disabled={availableFactories.length === 0 || loading}
-          className="flex-1 px-3 py-2 bg-slate-800 border border-slate-600 rounded text-white text-sm"
-        >
-          <option value="">
-            {availableFactories.length === 0 ? "All factories assigned" : "Select factory to add..."}
-          </option>
-          {availableFactories.map((f) => (
-            <option key={f.id} value={f.id}>
-              {f.name} {f.location ? `(${f.location})` : ""}
-            </option>
-          ))}
-        </select>
-        <button
-          onClick={addFactory}
-          disabled={!addFactoryId || loading}
-          className="px-3 py-2 bg-cyan-500 text-slate-950 rounded font-semibold text-sm disabled:opacity-50"
-        >
-          Add (priority {nextPriority})
-        </button>
-      </div>
-
-      {message && <p className="text-sm text-cyan-300">{message}</p>}
-
-      <div style={{ height: 360 }}>
-        <AgGridReact
-          rowData={rows}
-          columnDefs={columnDefs}
-          defaultColDef={{ resizable: true, sortable: true, filter: true, minWidth: 80 }}
-        />
-      </div>
-    </div>
-  );
-}

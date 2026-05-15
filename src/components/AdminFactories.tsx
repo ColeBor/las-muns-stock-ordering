@@ -179,17 +179,23 @@ export default function AdminFactories({
             {viewSelector ?? (
               <h2 className="text-xl font-semibold text-white">Factories</h2>
             )}
-            <button
-              onClick={() => {
-                setEditingFactory(null);
-                setName("");
-                setLocation("");
-                setShowForm(true);
-              }}
-              className="px-4 py-2 bg-cyan-500 text-slate-950 rounded-full font-semibold"
-            >
-              Add Factory
-            </button>
+            {factories.length === 0 ? (
+              <button
+                onClick={() => {
+                  setEditingFactory(null);
+                  setName("");
+                  setLocation("");
+                  setShowForm(true);
+                }}
+                className="px-4 py-2 bg-cyan-500 text-slate-950 rounded-full font-semibold"
+              >
+                Add Factory
+              </button>
+            ) : (
+              <span className="text-xs text-slate-500">
+                Single-factory operation — edit the existing row instead of adding more.
+              </span>
+            )}
           </div>
 
           {showForm && (

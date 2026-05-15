@@ -32,12 +32,6 @@ type FactoryInventoryRow = {
   on_hand_qty: number;
 };
 
-type StoreFactory = {
-  store_id: string;
-  factory_id: string;
-  priority: number;
-};
-
 type Override = {
   cycle_id: string;
   store_id: string;
@@ -136,7 +130,6 @@ export async function POST(request: NextRequest) {
   const [
     stockRes,
     factoryRes,
-    storeFactoryRes,
     overrideRes,
     itemsRes,
     cycleStoresRes,
@@ -157,9 +150,6 @@ export async function POST(request: NextRequest) {
     supabaseAdmin
       .from("factory_inventory")
       .select("factory_id,item_id,on_hand_qty"),
-    supabaseAdmin
-      .from("store_factories")
-      .select("store_id,factory_id,priority"),
     supabaseAdmin
       .from("allocation_overrides")
       .select("cycle_id,store_id,item_id,qty,mode")
@@ -182,7 +172,6 @@ export async function POST(request: NextRequest) {
   for (const res of [
     stockRes,
     factoryRes,
-    storeFactoryRes,
     overrideRes,
     itemsRes,
     cycleStoresRes,
@@ -197,8 +186,14 @@ export async function POST(request: NextRequest) {
 
   const stockEntries = (stockRes.data ?? []) as StockEntry[];
   const factoryInventory = (factoryRes.data ?? []) as FactoryInventoryRow[];
-  const storeFactories = (storeFactoryRes.data ?? []) as StoreFactory[];
   const overrides = (overrideRes.data ?? []) as Override[];
+
+  // Single-factory model: pick THE factory. If there's more than one row
+  // (legacy data) we just take the first deterministically. If there are
+  // zero, the allocator can still proceed but everything manufactured will
+  // come out as a shortfall.
+  const factories = (factoriesRes.data ?? []) as Array<{ id: string; name: string }>;
+  const factoryId: string | null = factories[0]?.id ?? null;
   const items = (itemsRes.data ?? []) as Item[];
   const cycleStores = (cycleStoresRes.data ?? []) as CycleStore[];
   const stores = (storesRes.data ?? []) as Array<{ id: string; tier: number }>;
@@ -215,36 +210,13 @@ export async function POST(request: NextRequest) {
   // produced even if stock_entries or overrides exist for other stores.
   const allowedStoreIds = new Set(cycleStores.map((c) => c.store_id));
 
-  // Every factory that any participating store routes to must have entered
-  // at least one factory_count row for this cycle. Without counts we'd
-  // assume 0 stock and report bogus shortfalls for every manufactured
-  // item, so block the run with a clear message naming the laggards.
-  const participatingFactoryIds = new Set<string>();
-  for (const sf of storeFactories) {
-    if (allowedStoreIds.has(sf.store_id)) {
-      participatingFactoryIds.add(sf.factory_id);
-    }
-  }
-  const factoriesWithCounts = new Set(
-    factoryInventory.map((fc) => fc.factory_id),
-  );
-  const missingFactoryIds = [...participatingFactoryIds].filter(
-    (id) => !factoriesWithCounts.has(id),
-  );
-  if (missingFactoryIds.length > 0) {
-    const factoryNameById = new Map(
-      (factoriesRes.data ?? []).map((f: { id: string; name: string }) => [
-        f.id,
-        f.name,
-      ]),
-    );
-    const names = missingFactoryIds
-      .map((id) => factoryNameById.get(id) ?? id)
-      .sort();
+  // Single-factory sanity check: if no factory has any inventory rows yet
+  // we still proceed (everything will surface as shortfalls), but if the
+  // factories table itself is empty there's nothing to allocate from —
+  // block with a clear message rather than crashing on a null factoryId.
+  if (!factoryId) {
     return NextResponse.json(
-      {
-        error: `Waiting on ${names.length} ${names.length === 1 ? "factory" : "factories"} to enter counts: ${names.join(", ")}`,
-      },
+      { error: "No factory configured. Add one under Directory → Factories first." },
       { status: 400 },
     );
   }
@@ -268,18 +240,9 @@ export async function POST(request: NextRequest) {
 
   const itemsById = new Map(items.map((i) => [i.id, i]));
 
-  // Index store_factories by store, sorted by priority.
-  const sfByStore = new Map<string, StoreFactory[]>();
-  for (const sf of storeFactories) {
-    const list = sfByStore.get(sf.store_id) ?? [];
-    list.push(sf);
-    sfByStore.set(sf.store_id, list);
-  }
-  for (const list of sfByStore.values()) {
-    list.sort((a, b) => a.priority - b.priority);
-  }
-
   // Running available stock per (factory, item) after the per-item reserve.
+  // Single-factory model — only the one factoryId has rows, but we keep the
+  // map keyed by (factory_id, item_id) so existing call sites still work.
   const availableMap = new Map<string, number>();
   for (const fc of factoryInventory) {
     const allocatable = Math.max(0, fc.on_hand_qty - RESERVE_PER_FACTORY_ITEM);
@@ -387,104 +350,69 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Manufactured allocation runs in two phases:
+  // Manufactured allocation runs in two phases against the single factory:
   //
   //   Phase 1 (floor of 1): every demanding store gets 1 unit of each
   //   manufactured item it wants, walking stores in tier order so the
-  //   highest-priority stores get the floor first if stock is tight.
+  //   highest-tier stores get the floor first if stock is tight.
   //
-  //   Phase 2 (tier-fair priority-fair distribution): the remaining stock
-  //   is distributed by tier (asc) outermost, then by store_factories
-  //   priority within each tier. Lower tier number = higher priority for
-  //   stock; same-tier stores are equal-priority. Within a tier we still
-  //   honor the existing priority-fair rule (a store at a factory's
-  //   priority-1 gets it before a different store using the same factory
-  //   as priority-2 fallback).
-  const maxPriority = storeFactories.reduce(
-    (m, sf) => (sf.priority > m ? sf.priority : m),
-    0,
-  );
-
-  const allocateOne = (state: ManufacturedState, sf: StoreFactory, want: number) => {
+  //   Phase 2 (tier-fair distribution): remaining stock is distributed
+  //   by tier (ascending), filling each store's full demand before
+  //   moving on. Lower tier number = higher priority for stock.
+  const allocateOne = (state: ManufacturedState, want: number) => {
     if (want <= 0) return 0;
-    const k = availableKey(sf.factory_id, state.item_id);
+    const k = availableKey(factoryId, state.item_id);
     const avail = availableMap.get(k) ?? 0;
     if (avail <= 0) return 0;
     const take = Math.min(want, avail);
     availableMap.set(k, avail - take);
-    if (state.primaryFactoryId === null) state.primaryFactoryId = sf.factory_id;
+    if (state.primaryFactoryId === null) state.primaryFactoryId = factoryId;
     state.fulfilled += take;
     factorySplits.push({
       cycle_id: cycle_id!,
       store_id: state.store_id,
       item_id: state.item_id,
-      factory_id: sf.factory_id,
+      factory_id: factoryId,
       qty: take,
     });
     return take;
   };
 
-  // Phase 1: floor of 1 per store, walking demanding stores in tier order.
-  // Each iteration tries the store's full factory-priority chain until we
-  // either get one unit or exhaust the chain.
   const stateList = [...manufacturedStates.values()];
   const sortedByTier = [...stateList].sort(
     (a, b) => tierOf(a.store_id) - tierOf(b.store_id),
   );
+
+  // Phase 1: floor of 1 per store, in tier order.
   for (const state of sortedByTier) {
     if (state.needed < 1 || state.fulfilled >= 1) continue;
-    let got = 0;
-    for (let p = 1; p <= maxPriority && got < 1; p++) {
-      for (const sf of storeFactories) {
-        if (got >= 1) break;
-        if (sf.store_id !== state.store_id || sf.priority !== p) continue;
-        got += allocateOne(state, sf, 1 - got);
-      }
-    }
+    allocateOne(state, 1);
   }
 
-  // Phase 2: tier-fair priority-fair distribution for the remaining demand.
-  const tiers = Array.from(
-    new Set(stateList.map((s) => tierOf(s.store_id))),
-  ).sort((a, b) => a - b);
-  for (const tier of tiers) {
-    for (let p = 1; p <= maxPriority; p++) {
-      for (const sf of storeFactories) {
-        if (sf.priority !== p) continue;
-        if (tierOf(sf.store_id) !== tier) continue;
-        for (const state of manufacturedStates.values()) {
-          if (state.store_id !== sf.store_id) continue;
-          const remaining = state.needed - state.fulfilled;
-          if (remaining <= 0) continue;
-          allocateOne(state, sf, remaining);
-        }
-      }
-    }
+  // Phase 2: distribute remaining demand, tier order again.
+  for (const state of sortedByTier) {
+    const remaining = state.needed - state.fulfilled;
+    if (remaining <= 0) continue;
+    allocateOne(state, remaining);
   }
 
-  // Phase 3 (hard overrides only): force-fulfill any remaining demand. We
-  // pick a target factory (primary if any pull happened, otherwise the
-  // store's highest-priority factory) and push a synthetic split for the
-  // deficit. availableMap may go negative — that's the point: the factory
-  // owns the deficit, not the store.
+  // Phase 3 (hard overrides only): force-fulfill any remaining demand.
+  // availableMap may go negative — that's the point: the factory owns
+  // the deficit, not the store.
   for (const state of manufacturedStates.values()) {
     if (state.overrideMode !== "hard") continue;
     const remaining = state.needed - state.fulfilled;
     if (remaining <= 0) continue;
-    const chain = sfByStore.get(state.store_id) ?? [];
-    const targetFactoryId = state.primaryFactoryId ?? chain[0]?.factory_id ?? null;
-    if (targetFactoryId) {
-      const k = availableKey(targetFactoryId, state.item_id);
-      availableMap.set(k, (availableMap.get(k) ?? 0) - remaining);
-      factorySplits.push({
-        cycle_id: cycle_id!,
-        store_id: state.store_id,
-        item_id: state.item_id,
-        factory_id: targetFactoryId,
-        qty: remaining,
-      });
-      if (state.primaryFactoryId === null) state.primaryFactoryId = targetFactoryId;
-    }
+    const k = availableKey(factoryId, state.item_id);
+    availableMap.set(k, (availableMap.get(k) ?? 0) - remaining);
+    factorySplits.push({
+      cycle_id: cycle_id!,
+      store_id: state.store_id,
+      item_id: state.item_id,
+      factory_id: factoryId,
+      qty: remaining,
+    });
+    if (state.primaryFactoryId === null) state.primaryFactoryId = factoryId;
     state.overdraft = remaining;
     state.fulfilled = state.needed;
   }

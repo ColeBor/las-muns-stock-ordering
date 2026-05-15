@@ -96,10 +96,19 @@ export default function FactoryStock() {
     if (!isStoreManager) return;
     const loadFactories = async () => {
       const { data } = await supabase.from("factories").select("id,name").order("name");
-      if (data) setAllFactories(data as Factory[]);
+      if (data) {
+        const list = data as Factory[];
+        setAllFactories(list);
+        // Single-factory operation: auto-pick the lone factory so the
+        // boss never has to choose. The dropdown (still rendered for
+        // legacy multi-factory data) defaults to it.
+        if (list.length === 1 && !selectedFactoryId) {
+          setSelectedFactoryId(list[0].id);
+        }
+      }
     };
     loadFactories();
-  }, [isStoreManager]);
+  }, [isStoreManager, selectedFactoryId]);
 
   useEffect(() => {
     if (!canManage || !effectiveFactoryId) {
@@ -469,7 +478,7 @@ export default function FactoryStock() {
               </p>
             </div>
             <div className="flex items-center gap-4">
-              {isStoreManager && (
+              {isStoreManager && allFactories.length > 1 && (
                 <>
                   <label htmlFor="factory" className="text-sm font-medium text-slate-300">
                     Factory:
