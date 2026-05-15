@@ -36,7 +36,6 @@ export default function AdminItems() {
   const [showForm, setShowForm] = useState(false);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [name, setName] = useState("");
-  const [type, setType] = useState<"manufactured" | "purchased">("manufactured");
   const [supplierId, setSupplierId] = useState("");
   const [subCategory, setSubCategory] = useState("");
   const [packagingType, setPackagingType] = useState("");
@@ -78,7 +77,6 @@ export default function AdminItems() {
   const resetForm = () => {
     setEditingItem(null);
     setName("");
-    setType("manufactured");
     setSupplierId("");
     setSubCategory("");
     setPackagingType("");
@@ -106,9 +104,12 @@ export default function AdminItems() {
       setLoading(false);
       return;
     }
+    // Type is derived from supplier: no supplier → we make it
+    // (manufactured), supplier picked → external purchase. The DB column
+    // is kept in sync so the allocator and other read paths don't change.
     const payload = {
       name: name.trim(),
-      type,
+      type: supplierId ? "purchased" : "manufactured",
       supplier_id: supplierId || null,
       sub_category: subCategory || null,
       packaging_type: packagingType || null,
@@ -137,7 +138,6 @@ export default function AdminItems() {
   const handleEdit = (item: Item) => {
     setEditingItem(item);
     setName(item.name);
-    setType(item.type);
     setSupplierId(item.supplier_id || "");
     setSubCategory(item.sub_category || "");
     setPackagingType(item.packaging_type || "");
@@ -335,23 +335,15 @@ export default function AdminItems() {
   const columnDefs: ColDef<Item>[] = useMemo(() => [
     { headerName: "Name", field: "name", sortable: true, filter: true, flex: 2, minWidth: 150 },
     {
-      headerName: "Type",
-      field: "type",
-      sortable: true,
-      filter: true,
-      width: 130,
-      valueFormatter: (p) => {
-        const v = (p.value as string | undefined) ?? "";
-        return v ? v.charAt(0).toUpperCase() + v.slice(1) : "";
-      },
-    },
-    {
       headerName: "Supplier",
-      valueGetter: (params) => params.data?.suppliers?.name || "",
+      // Empty supplier means we make it ourselves. The allocator routes
+      // these through factory_inventory; everything else goes through POs.
+      valueGetter: (params) =>
+        params.data?.suppliers?.name ?? (params.data ? "(We make it)" : ""),
       sortable: true,
       filter: true,
       flex: 1,
-      minWidth: 130,
+      minWidth: 150,
     },
     {
       headerName: "Sub-Category",
@@ -507,31 +499,24 @@ export default function AdminItems() {
                   />
                 </div>
                 <div>
-                  <label htmlFor="type" className="block text-sm font-medium text-slate-300">Type</label>
-                  <select
-                    id="type"
-                    value={type}
-                    onChange={(e) => setType(e.target.value as "manufactured" | "purchased")}
-                    className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
-                    required
-                  >
-                    <option value="manufactured">Manufactured</option>
-                    <option value="purchased">Purchased</option>
-                  </select>
-                </div>
-                <div>
-                  <label htmlFor="supplier" className="block text-sm font-medium text-slate-300">Supplier</label>
+                  <label htmlFor="supplier" className="block text-sm font-medium text-slate-300">
+                    Supplier
+                  </label>
                   <select
                     id="supplier"
                     value={supplierId}
                     onChange={(e) => setSupplierId(e.target.value)}
                     className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
                   >
-                    <option value="">None</option>
+                    <option value="">We make it (manufactured)</option>
                     {suppliers.map((s) => (
                       <option key={s.id} value={s.id}>{s.name}</option>
                     ))}
                   </select>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Pick a supplier to mark this as purchased. Leave on
+                    &quot;We make it&quot; for in-house items.
+                  </p>
                 </div>
                 <div>
                   <label htmlFor="sub" className="block text-sm font-medium text-slate-300">Sub Category</label>
