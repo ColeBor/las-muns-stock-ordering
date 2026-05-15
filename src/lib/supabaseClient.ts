@@ -22,7 +22,7 @@ const passthroughLock = <R>(
 // receives a rejection it can recover from instead of the UI sitting on
 // Loading… / Running… forever. Honor a caller-supplied signal if there
 // is one — don't double-abort.
-const REQUEST_TIMEOUT_MS = 20_000;
+const REQUEST_TIMEOUT_MS = 10_000;
 const fetchWithTimeout: typeof fetch = (input, init) => {
   if (init?.signal) {
     return fetch(input, init);
