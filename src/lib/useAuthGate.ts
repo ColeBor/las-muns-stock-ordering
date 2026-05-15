@@ -90,6 +90,15 @@ export function useAuthGate(): AuthGate {
     let alive = true;
     setProfileLoaded(false);
 
+    // Safety net: if the profile fetch ever hangs (network, RLS edge
+    // case, supabase-js lock contention) we'd otherwise sit on Loading…
+    // forever. Flip profileLoaded after 5s so the UI at least falls
+    // through to the role-gated branches.
+    const timer = window.setTimeout(() => {
+      if (!alive) return;
+      setProfileLoaded(true);
+    }, 5000);
+
     (async () => {
       if (!userId) {
         if (!alive) return;
@@ -97,18 +106,31 @@ export function useAuthGate(): AuthGate {
         setProfileLoaded(true);
         return;
       }
-      const { data } = await supabase
-        .from("profiles")
-        .select("id,role,store_id,factory_id")
-        .eq("id", userId)
-        .single();
-      if (!alive) return;
-      setProfile((data as AuthProfile) ?? null);
-      setProfileLoaded(true);
+      try {
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("id,role,store_id,factory_id")
+          .eq("id", userId)
+          .single();
+        if (!alive) return;
+        if (error) {
+          // eslint-disable-next-line no-console
+          console.error("useAuthGate profile fetch error:", error);
+        }
+        setProfile((data as AuthProfile) ?? null);
+        setProfileLoaded(true);
+      } catch (err) {
+        if (!alive) return;
+        // eslint-disable-next-line no-console
+        console.error("useAuthGate profile fetch threw:", err);
+        setProfile(null);
+        setProfileLoaded(true);
+      }
     })();
 
     return () => {
       alive = false;
+      window.clearTimeout(timer);
     };
   }, [userId, sessionLoaded]);
 
