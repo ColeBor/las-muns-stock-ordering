@@ -339,7 +339,7 @@ export default function AdminItems() {
       // Empty supplier means we make it ourselves. The allocator routes
       // these through factory_inventory; everything else goes through POs.
       valueGetter: (params) =>
-        params.data?.suppliers?.name ?? (params.data ? "(We make it)" : ""),
+        params.data?.suppliers?.name ?? (params.data ? "Manufactured" : ""),
       sortable: true,
       filter: true,
       flex: 1,
@@ -508,14 +508,14 @@ export default function AdminItems() {
                     onChange={(e) => setSupplierId(e.target.value)}
                     className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
                   >
-                    <option value="">We make it (manufactured)</option>
+                    <option value="">Manufactured</option>
                     {suppliers.map((s) => (
                       <option key={s.id} value={s.id}>{s.name}</option>
                     ))}
                   </select>
                   <p className="mt-1 text-xs text-slate-500">
                     Pick a supplier to mark this as purchased. Leave on
-                    &quot;We make it&quot; for in-house items.
+                    &quot;Manufactured&quot; for in-house items.
                   </p>
                 </div>
                 <div>
