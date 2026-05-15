@@ -1,20 +1,22 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { processLock } from "@supabase/auth-js";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-// Default supabase-js uses navigator.locks to coordinate JWT refreshes
-// across browser tabs. If a tab holds the lock and goes stale (bfcache,
-// service-worker eviction, etc.) other tabs / new loads hang waiting on
-// it — which is what we kept seeing: the page sits on "Loading…", going
-// home and refreshing temporarily clears it. Replace the lock with a
-// pass-through. Tradeoff: two tabs could in theory refresh the token at
-// the same time; for a small-team internal tool that's fine.
-const passthroughLock = <R>(
-  _name: string,
-  _acquireTimeout: number,
-  fn: () => Promise<R>,
-) => fn();
+// supabase-js v2's default lock is navigator.locks, which can deadlock
+// across tabs (bfcached / backgrounded tabs hold the lock indefinitely
+// and new loads hang forever waiting on it). A pure pass-through fixed
+// the hang but introduced a separate bug — concurrent auth operations
+// within a single tab raced and could clobber localStorage tokens,
+// leaving fresh page mounts with a null session even though the user
+// was clearly signed in (saw it on the worker log pages).
+//
+// processLock is the supabase-js-provided alternative: an in-memory
+// mutex scoped to the current tab/process. It serialises auth
+// operations within the tab (no internal races) without coordinating
+// across tabs (no cross-tab deadlock). Best of both worlds for a
+// small-team tool where cross-tab refresh races are negligible.
 
 // Belt-and-suspenders for the same family of hangs: cap every outgoing
 // fetch (REST queries, auth refreshes, storage uploads, …) at 20s. If
@@ -37,7 +39,7 @@ const fetchWithTimeout: typeof fetch = (input, init) => {
 export const supabase: SupabaseClient =
   supabaseUrl && supabaseAnonKey
     ? createClient(supabaseUrl, supabaseAnonKey, {
-        auth: { lock: passthroughLock },
+        auth: { lock: processLock },
         global: { fetch: fetchWithTimeout },
       })
     : ({} as SupabaseClient);
