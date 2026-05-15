@@ -174,7 +174,6 @@ export default function StoreStockEntry() {
   useEffect(() => {
     if (!canManage || !effectiveStoreId) {
       setStore(null);
-      setCycles([]);
       setStoreItems([]);
       setEntries([]);
       setGridData([]);
@@ -183,31 +182,13 @@ export default function StoreStockEntry() {
     }
 
     const loadStoreData = async () => {
-      // Cycle dropdown shows every active cycle plus at most the 2 most
-      // recent delivered ones — store employees don't need a long history,
-      // but a couple of recent finished orders are useful for reference.
       // stock_entries is fetched lazily once the cycle is selected (see
       // separate effect below) so we don't pull every entry across every
-      // cycle for the store.
-      const [
-        storeResponse,
-        activeCyclesResponse,
-        deliveredCyclesResponse,
-        itemsResponse,
-        priorEntriesResponse,
-      ] = await Promise.all([
+      // cycle for the store. Cycles themselves are loaded by a separate
+      // realtime-subscribed effect so a new cycle created by HQ shows up
+      // in the dropdown without the worker refreshing.
+      const [storeResponse, itemsResponse, priorEntriesResponse] = await Promise.all([
         supabase.from("stores").select("id,name").eq("id", effectiveStoreId).single(),
-        supabase
-          .from("order_cycles")
-          .select("id,status,order_date")
-          .neq("status", "delivered")
-          .order("created_at", { ascending: false }),
-        supabase
-          .from("order_cycles")
-          .select("id,status,order_date")
-          .eq("status", "delivered")
-          .order("created_at", { ascending: false })
-          .limit(2),
         supabase
           .from("store_items")
           .select("item_id,is_active,capacity,items(name,sub_category,packaging_type)")
@@ -223,12 +204,6 @@ export default function StoreStockEntry() {
       if (storeResponse.data) {
         setStore(storeResponse.data as Store);
       }
-
-      const cycleList = [
-        ...((activeCyclesResponse.data as OrderCycle[]) ?? []),
-        ...((deliveredCyclesResponse.data as OrderCycle[]) ?? []),
-      ];
-      setCycles(cycleList);
 
       if (itemsResponse.data) {
         setStoreItems(itemsResponse.data as unknown as StoreItem[]);
@@ -248,6 +223,47 @@ export default function StoreStockEntry() {
 
     loadStoreData();
   }, [canManage, effectiveStoreId]);
+
+  // Cycle dropdown: every active cycle plus at most the 2 most recent
+  // delivered ones. Pulled separately and subscribed to realtime so HQ
+  // creating a new cycle surfaces immediately for the worker — no
+  // refresh needed.
+  const cyclesTokenRef = useRef(0);
+  const loadCycles = useCallback(async () => {
+    if (!canManage) {
+      setCycles([]);
+      return;
+    }
+    const myToken = ++cyclesTokenRef.current;
+    const [activeRes, deliveredRes] = await Promise.all([
+      supabase
+        .from("order_cycles")
+        .select("id,status,order_date")
+        .neq("status", "delivered")
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("order_cycles")
+        .select("id,status,order_date")
+        .eq("status", "delivered")
+        .order("created_at", { ascending: false })
+        .limit(2),
+    ]);
+    if (myToken !== cyclesTokenRef.current) return;
+    setCycles([
+      ...((activeRes.data as OrderCycle[]) ?? []),
+      ...((deliveredRes.data as OrderCycle[]) ?? []),
+    ]);
+  }, [canManage]);
+
+  useEffect(() => {
+    loadCycles();
+  }, [loadCycles]);
+
+  useRealtimeRefetch(
+    canManage ? [{ table: "order_cycles" }, { table: "cycle_stores" }] : [],
+    loadCycles,
+    "store-stock-entry-cycles",
+  );
 
   // Lazy-fetch stock entries scoped to (cycle, store) only — no embed,
   // no cross-cycle data. Refetched whenever the selection changes.
