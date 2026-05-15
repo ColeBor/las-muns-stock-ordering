@@ -45,6 +45,27 @@ const WASTE_REASONS = [
   "Other",
 ] as const;
 
+// Plain-English explanations shown in the "What do these mean?" disclosure
+// below the Reason dropdown so workers can pick the right one. Keys mirror
+// WASTE_REASONS exactly.
+const WASTE_REASON_DESCRIPTIONS: Record<(typeof WASTE_REASONS)[number], string> = {
+  "Influencer": "Whenever giving out free empanadas to influencers.",
+  "Friday Waste":
+    "Only for locations that close on Saturday & Sunday. Because by Monday, anything baked on Thursday will already be 4 days old, we pre-emptively waste it on Friday.",
+  "Sample": "Empanadas given out as samples.",
+  "Dropped": "Empanadas dropped on the ground or other dirty surfaces.",
+  "Burned / Popped": "Empanadas that were burned or popped in the oven.",
+  "Over 3 Days Old": "Any empanadas over 3 days old — we do not sell them.",
+  "Customer Comp.":
+    "If we made a mistake and want to compensate the customer with a free item.",
+  "Promotion":
+    "If we are running a promotion or campaign — for example on our anniversary, we may be giving out free empanadas to people who follow us on Instagram.",
+  "Kitchen Issue":
+    "Empanadas that visually or structurally are not fit to sell because of the way they were prepared in the commissary kitchen. Examples: coming apart at the seams, poorly placed or incorrect stamps, deformed, broken (missing a piece of their crown), etc.",
+  "Owners": "Empanadas taken for free by the owners.",
+  "Other": "For a reason not already listed — please leave your reason.",
+};
+
 function todayIso() {
   // YYYY-MM-DD in the user's local timezone — what <input type="date"> expects.
   const now = new Date();
@@ -426,6 +447,24 @@ export default function WasteLog() {
                         </select>
                       </div>
                     </div>
+                    <details className="group rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm">
+                      <summary className="cursor-pointer list-none text-slate-300 marker:hidden hover:text-cyan-300">
+                        <span className="inline-flex items-center gap-2">
+                          <span className="text-base leading-none transition group-open:rotate-90">▸</span>
+                          What do these mean?
+                        </span>
+                      </summary>
+                      <dl className="mt-3 space-y-2 text-slate-300">
+                        {WASTE_REASONS.map((r) => (
+                          <div key={r}>
+                            <dt className="font-semibold text-white">{r}</dt>
+                            <dd className="mt-0.5 text-xs text-slate-400">
+                              {WASTE_REASON_DESCRIPTIONS[r]}
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </details>
                     {reason === "Other" && (
                       <div>
                         <label htmlFor="reason-other" className="block text-sm font-medium text-slate-300">
