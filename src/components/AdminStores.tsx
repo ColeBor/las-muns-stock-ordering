@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
+import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
 import { AgGridReact } from "@/lib/agGrid";
 import type { ColDef, ICellRendererParams } from "ag-grid-community";
 
@@ -36,21 +37,31 @@ export default function AdminStores({
 
   const canManage = isStoreManager;
 
-  const reloadStores = async () => {
-    const { data } = await supabase
-      .from("stores")
-      .select("*")
-      .order("created_at", { ascending: false });
-    if (data) setStores(data as Store[]);
-  };
-
-  useEffect(() => {
+  // Drop stale responses so racing realtime events can't clobber the list.
+  const reloadStoresTokenRef = useRef(0);
+  const reloadStores = useCallback(async () => {
     if (!canManage) {
       setStores([]);
       return;
     }
-    reloadStores();
+    const myToken = ++reloadStoresTokenRef.current;
+    const { data } = await supabase
+      .from("stores")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (myToken !== reloadStoresTokenRef.current) return;
+    if (data) setStores(data as Store[]);
   }, [canManage]);
+
+  useEffect(() => {
+    reloadStores();
+  }, [reloadStores]);
+
+  useRealtimeRefetch(
+    canManage ? [{ table: "stores" }] : [],
+    reloadStores,
+    "admin-stores",
+  );
 
   const selectedStore = useMemo(
     () => stores.find((s) => s.id === selectedStoreId) ?? null,
@@ -356,7 +367,11 @@ function StoreItemsTab({ storeId }: { storeId: string }) {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  const reload = async () => {
+  // Drop stale responses so racing realtime events (toggling many items,
+  // edits from another tab) can't overwrite the grid with old data.
+  const reloadTokenRef = useRef(0);
+  const reload = useCallback(async () => {
+    const myToken = ++reloadTokenRef.current;
     const [itemsRes, storeItemsRes] = await Promise.all([
       supabase.from("items").select("id,name,type").order("name"),
       supabase
@@ -364,13 +379,20 @@ function StoreItemsTab({ storeId }: { storeId: string }) {
         .select("item_id,is_active,capacity")
         .eq("store_id", storeId),
     ]);
+    if (myToken !== reloadTokenRef.current) return;
     if (itemsRes.data) setAllItems(itemsRes.data as Item[]);
     if (storeItemsRes.data) setStoreItems(storeItemsRes.data);
-  };
+  }, [storeId]);
 
   useEffect(() => {
     reload();
-  }, [storeId]);
+  }, [reload]);
+
+  useRealtimeRefetch(
+    [{ table: "items" }, { table: "store_items" }],
+    reload,
+    `admin-stores-${storeId}-items`,
+  );
 
   const rows: StoreItemRow[] = useMemo(() => {
     const byId = new Map(storeItems.map((si) => [si.item_id, si]));

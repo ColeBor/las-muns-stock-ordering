@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
+import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
 import { AgGridReact } from "@/lib/agGrid";
 import type { ColDef } from "ag-grid-community";
 
@@ -47,7 +48,17 @@ export default function AdminItems() {
 
   const canManage = isStoreManager;
 
-  const reload = async () => {
+  // Drop stale responses so racing realtime events can't overwrite the
+  // grid with an older snapshot.
+  const reloadTokenRef = useRef(0);
+  const reload = useCallback(async () => {
+    if (!canManage) {
+      setItems([]);
+      setSuppliers([]);
+      setPackagingTypes([]);
+      return;
+    }
+    const myToken = ++reloadTokenRef.current;
     const [itemsRes, suppliersRes, packagingRes] = await Promise.all([
       supabase
         .from("items")
@@ -56,23 +67,33 @@ export default function AdminItems() {
       supabase.from("suppliers").select("id, name").order("name"),
       supabase.from("packaging_types").select("name").order("name"),
     ]);
+    if (myToken !== reloadTokenRef.current) return;
     if (itemsRes.data) setItems(itemsRes.data as Item[]);
     if (suppliersRes.data) setSuppliers(suppliersRes.data as Supplier[]);
     if (packagingRes.data)
       setPackagingTypes(
         (packagingRes.data as Array<{ name: string }>).map((p) => p.name),
       );
-  };
+  }, [canManage]);
 
   useEffect(() => {
-    if (!canManage) {
-      setItems([]);
-      setSuppliers([]);
-      setPackagingTypes([]);
-      return;
-    }
     reload();
-  }, [canManage]);
+  }, [reload]);
+
+  // Subscribe to every table that feeds this grid + its dropdowns so
+  // changes anywhere flow through automatically.
+  useRealtimeRefetch(
+    canManage
+      ? [
+          { table: "items" },
+          { table: "suppliers" },
+          { table: "packaging_types" },
+          { table: "store_items" },
+        ]
+      : [],
+    reload,
+    "admin-items",
+  );
 
   const resetForm = () => {
     setEditingItem(null);

@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
+import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
 import { AgGridReact } from "@/lib/agGrid";
 import type { ColDef } from "ag-grid-community";
 
@@ -30,28 +31,36 @@ export default function AdminFactories({
 
   const canManage = isStoreManager;
 
-  useEffect(() => {
+  // Drop stale responses so a racing realtime event can't clobber the
+  // grid with an outdated snapshot.
+  const factoriesTokenRef = useRef(0);
+  const loadFactories = useCallback(async () => {
     if (!canManage) {
       setFactories([]);
       return;
     }
-
-    const loadFactories = async () => {
-      const { data, error } = await supabase
-        .from("factories")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        setMessage(error.message);
-        return;
-      }
-
-      setFactories(data as Factory[]);
-    };
-
-    loadFactories();
+    const myToken = ++factoriesTokenRef.current;
+    const { data, error } = await supabase
+      .from("factories")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (myToken !== factoriesTokenRef.current) return;
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+    setFactories(data as Factory[]);
   }, [canManage]);
+
+  useEffect(() => {
+    loadFactories();
+  }, [loadFactories]);
+
+  useRealtimeRefetch(
+    canManage ? [{ table: "factories" }] : [],
+    loadFactories,
+    "admin-factories",
+  );
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

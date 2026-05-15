@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
+import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
 import { AgGridReact } from "@/lib/agGrid";
 import type { ColDef } from "ag-grid-community";
 
@@ -30,28 +31,36 @@ export default function AdminSuppliers({
 
   const canManage = isStoreManager;
 
-  useEffect(() => {
+  // Drop stale responses so a racing realtime event can't clobber the
+  // grid with an outdated snapshot.
+  const suppliersTokenRef = useRef(0);
+  const loadSuppliers = useCallback(async () => {
     if (!canManage) {
       setSuppliers([]);
       return;
     }
-
-    const loadSuppliers = async () => {
-      const { data, error } = await supabase
-        .from("suppliers")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        setMessage(error.message);
-        return;
-      }
-
-      setSuppliers(data as Supplier[]);
-    };
-
-    loadSuppliers();
+    const myToken = ++suppliersTokenRef.current;
+    const { data, error } = await supabase
+      .from("suppliers")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (myToken !== suppliersTokenRef.current) return;
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+    setSuppliers(data as Supplier[]);
   }, [canManage]);
+
+  useEffect(() => {
+    loadSuppliers();
+  }, [loadSuppliers]);
+
+  useRealtimeRefetch(
+    canManage ? [{ table: "suppliers" }] : [],
+    loadSuppliers,
+    "admin-suppliers",
+  );
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -89,16 +98,7 @@ export default function AdminSuppliers({
     setEditingSupplier(null);
     setName("");
     setContactInfo("");
-
-    // Reload suppliers
-    const { data } = await supabase
-      .from("suppliers")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (data) {
-      setSuppliers(data as Supplier[]);
-    }
+    await loadSuppliers();
   };
 
   const handleEdit = (supplier: Supplier) => {

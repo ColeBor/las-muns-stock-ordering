@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
+import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
 import { AgGridReact } from "@/lib/agGrid";
 import type { ColDef, ICellRendererParams } from "ag-grid-community";
 
@@ -24,25 +25,36 @@ export default function AdminPackagingTypes() {
 
   const canManage = isStoreManager;
 
-  const reload = async () => {
+  // Drop stale responses + subscribe to realtime so the AdminItems
+  // dropdown (which reads this same list) stays in sync across tabs.
+  const reloadTokenRef = useRef(0);
+  const reload = useCallback(async () => {
+    if (!canManage) {
+      setPackagingTypes([]);
+      return;
+    }
+    const myToken = ++reloadTokenRef.current;
     const { data, error } = await supabase
       .from("packaging_types")
       .select("*")
       .order("name");
+    if (myToken !== reloadTokenRef.current) return;
     if (error) {
       setMessage(error.message);
       return;
     }
     setPackagingTypes((data as PackagingType[]) ?? []);
-  };
+  }, [canManage]);
 
   useEffect(() => {
-    if (!canManage) {
-      setPackagingTypes([]);
-      return;
-    }
     reload();
-  }, [canManage]);
+  }, [reload]);
+
+  useRealtimeRefetch(
+    canManage ? [{ table: "packaging_types" }] : [],
+    reload,
+    "admin-packaging-types",
+  );
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
