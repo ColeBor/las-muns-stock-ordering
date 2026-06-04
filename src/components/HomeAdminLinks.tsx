@@ -17,6 +17,7 @@ export default function HomeAdminLinks() {
   const [isStoreManager, setIsStoreManager] = useState(false);
   const [alertCount, setAlertCount] = useState(0);
   const [requestsAlertCount, setRequestsAlertCount] = useState(0);
+  const [wasteAlertCount, setWasteAlertCount] = useState(0);
 
   useEffect(() => {
     const cached = localStorage.getItem(ROLE_CACHE_KEY);
@@ -132,6 +133,42 @@ export default function HomeAdminLinks() {
     `home-requests-alert-badge`,
   );
 
+  // Waste-cap alert: count active (store, day) breaches. is_active_alert
+  // folds in the cap comparison + resolution/re-arm — see migration
+  // 20260604120000_waste_daily_cap.sql.
+  const loadWasteAlertCount = useCallback(async () => {
+    if (!isStoreManager) {
+      setWasteAlertCount(0);
+      return;
+    }
+    const { count, error } = await supabase
+      .from("waste_cap_alerts")
+      .select("store_id", { count: "exact", head: true })
+      .eq("is_active_alert", true);
+    if (error) {
+      setWasteAlertCount(0);
+      return;
+    }
+    setWasteAlertCount(count ?? 0);
+  }, [isStoreManager]);
+
+  useEffect(() => {
+    loadWasteAlertCount();
+  }, [loadWasteAlertCount]);
+
+  useRealtimeRefetch(
+    isStoreManager
+      ? [
+          { table: "waste_log_entries" },
+          { table: "waste_cap_resolutions" },
+          { table: "stores" },
+          { table: "app_config" },
+        ]
+      : [],
+    loadWasteAlertCount,
+    `home-waste-alert-badge`,
+  );
+
   if (!isStoreManager) return null;
 
   return (
@@ -168,6 +205,22 @@ export default function HomeAdminLinks() {
           }
         >
           Employee Requests
+        </AdminLink>
+        <AdminLink
+          href="/admin/waste-alerts"
+          alert={wasteAlertCount > 0}
+          alertBadge={
+            wasteAlertCount > 0 ? (
+              <>
+                <span aria-label={`${wasteAlertCount} over cap`}>⚠</span>
+                <span className="ml-1 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-slate-950/30 px-1.5 text-xs font-bold">
+                  {wasteAlertCount}
+                </span>
+              </>
+            ) : null
+          }
+        >
+          Waste Alerts
         </AdminLink>
         <AdminLink href="/admin/waste-analytics">Waste Analytics</AdminLink>
       </AdminSection>

@@ -13,6 +13,7 @@ type Store = {
   name: string;
   tier: number;
   location: string | null;
+  daily_waste_cap: number | null;
   created_at: string;
 };
 
@@ -30,6 +31,8 @@ export default function AdminStores({
   const [name, setName] = useState("");
   const [tier, setTier] = useState(3);
   const [location, setLocation] = useState("");
+  // Per-store daily waste cap override. Empty string = use the global default.
+  const [wasteCap, setWasteCap] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
@@ -74,10 +77,19 @@ export default function AdminStores({
     setLoading(true);
     setMessage(null);
 
+    const trimmedCap = wasteCap.trim();
+    const parsedCap = trimmedCap === "" ? null : parseInt(trimmedCap, 10);
+    if (parsedCap !== null && (!Number.isFinite(parsedCap) || parsedCap <= 0)) {
+      setLoading(false);
+      setMessage("Daily waste cap must be a positive whole number, or left blank.");
+      return;
+    }
+
     const payload = {
       name: name.trim(),
       tier,
       location: location.trim() || null,
+      daily_waste_cap: parsedCap,
     };
 
     const { error } = editingStore
@@ -97,6 +109,7 @@ export default function AdminStores({
     setName("");
     setTier(3);
     setLocation("");
+    setWasteCap("");
     await reloadStores();
   };
 
@@ -105,6 +118,7 @@ export default function AdminStores({
     setName(store.name);
     setTier(store.tier);
     setLocation(store.location || "");
+    setWasteCap(store.daily_waste_cap != null ? String(store.daily_waste_cap) : "");
     setShowForm(true);
   };
 
@@ -187,6 +201,7 @@ export default function AdminStores({
                 setName("");
                 setTier(3);
                 setLocation("");
+                setWasteCap("");
                 setShowForm(true);
                 setSelectedStoreId(null);
               }}
@@ -212,10 +227,12 @@ export default function AdminStores({
               name={name}
               tier={tier}
               location={location}
+              wasteCap={wasteCap}
               loading={loading}
               setName={setName}
               setTier={setTier}
               setLocation={setLocation}
+              setWasteCap={setWasteCap}
               onSubmit={handleSubmit}
               onCancel={() => setShowForm(false)}
             />
@@ -260,10 +277,12 @@ export default function AdminStores({
                   name={name}
                   tier={tier}
                   location={location}
+                  wasteCap={wasteCap}
                   loading={loading}
                   setName={setName}
                   setTier={setTier}
                   setLocation={setLocation}
+                  setWasteCap={setWasteCap}
                   onSubmit={handleSubmit}
                   onCancel={() => setSelectedStoreId(null)}
                 />
@@ -282,10 +301,12 @@ function StoreEditForm(props: {
   name: string;
   tier: number;
   location: string;
+  wasteCap: string;
   loading: boolean;
   setName: (v: string) => void;
   setTier: (v: number) => void;
   setLocation: (v: string) => void;
+  setWasteCap: (v: string) => void;
   onSubmit: (e: FormEvent<HTMLFormElement>) => void;
   onCancel: () => void;
 }) {
@@ -328,6 +349,25 @@ function StoreEditForm(props: {
           value={props.location}
           onChange={(e) => props.setLocation(e.target.value)}
           className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
+        />
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-slate-300">
+          Daily waste cap{" "}
+          <span className="text-xs text-slate-500">
+            (items/day before this store is flagged — leave blank to use the global default)
+          </span>
+        </label>
+        <input
+          type="number"
+          min={1}
+          step={1}
+          inputMode="numeric"
+          value={props.wasteCap}
+          onChange={(e) => props.setWasteCap(e.target.value)}
+          placeholder="Global default"
+          className="mt-1 w-40 rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
         />
       </div>
 

@@ -45,6 +45,7 @@ const EMPLOYEE_LINKS: Array<{ href: string; label: string }> = [
 const ADMIN_LINKS: Array<{ href: string; label: string }> = [
   { href: "/admin/temperature-alerts", label: "Temperature Alerts" },
   { href: "/admin/requests", label: "Employee Requests" },
+  { href: "/admin/waste-alerts", label: "Waste Alerts" },
   { href: "/admin/waste-analytics", label: "Waste Analytics" },
   { href: "/admin/cycles", label: "Cycles" },
   { href: "/factory-stock", label: "Factory Stock" },
@@ -63,6 +64,7 @@ export default function PageShellNav() {
   // Admin alerts (counts)
   const [tempAlertCount, setTempAlertCount] = useState(0);
   const [requestsAlertCount, setRequestsAlertCount] = useState(0);
+  const [wasteAlertCount, setWasteAlertCount] = useState(0);
   // Employee alerts (flags — mirrors HomeGate)
   const [empStockEntryAlert, setEmpStockEntryAlert] = useState(false);
   const [empTempLogAlert, setEmpTempLogAlert] = useState(false);
@@ -141,12 +143,31 @@ export default function PageShellNav() {
     setRequestsAlertCount(count ?? 0);
   }, [isStoreManager]);
 
+  const loadWasteAlertCount = useCallback(async () => {
+    if (!isStoreManager) {
+      setWasteAlertCount(0);
+      return;
+    }
+    const { count, error } = await supabase
+      .from("waste_cap_alerts")
+      .select("store_id", { count: "exact", head: true })
+      .eq("is_active_alert", true);
+    if (error) {
+      setWasteAlertCount(0);
+      return;
+    }
+    setWasteAlertCount(count ?? 0);
+  }, [isStoreManager]);
+
   useEffect(() => {
     loadTempAlertCount();
   }, [loadTempAlertCount]);
   useEffect(() => {
     loadRequestsAlertCount();
   }, [loadRequestsAlertCount]);
+  useEffect(() => {
+    loadWasteAlertCount();
+  }, [loadWasteAlertCount]);
 
   useRealtimeRefetch(
     isStoreManager
@@ -167,6 +188,18 @@ export default function PageShellNav() {
       : [],
     loadRequestsAlertCount,
     "pageshell-requests-alert-badge",
+  );
+  useRealtimeRefetch(
+    isStoreManager
+      ? [
+          { table: "waste_log_entries" },
+          { table: "waste_cap_resolutions" },
+          { table: "stores" },
+          { table: "app_config" },
+        ]
+      : [],
+    loadWasteAlertCount,
+    "pageshell-waste-alert-badge",
   );
 
   // Employee alerts: mirror the four checks from HomeGate so badges show
@@ -299,6 +332,8 @@ export default function PageShellNav() {
         return { show: tempAlertCount > 0, count: tempAlertCount };
       if (href === "/admin/requests")
         return { show: requestsAlertCount > 0, count: requestsAlertCount };
+      if (href === "/admin/waste-alerts")
+        return { show: wasteAlertCount > 0, count: wasteAlertCount };
       return { show: false, count: null };
     }
     if (href === "/store-stock-entry") return { show: empStockEntryAlert, count: null };
