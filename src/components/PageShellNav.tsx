@@ -31,6 +31,7 @@ const PILL_CLASS =
 
 const EMPLOYEE_LINKS: Array<{ href: string; label: string }> = [
   { href: "/store-stock-entry", label: "Order Sheet" },
+  { href: "/scheduled-orders", label: "Scheduled Orders" },
   { href: "/logs/temperature", label: "Temperature Log" },
   { href: "/logs/waste", label: "Waste Log" },
   { href: "/logs/box-trace", label: "Box Trace Log" },
@@ -49,6 +50,7 @@ const ADMIN_LINKS: Array<{ href: string; label: string }> = [
   { href: "/admin/waste-analytics", label: "Waste Analytics" },
   { href: "/admin/cycles", label: "Cycles" },
   { href: "/factory-stock", label: "Factory Stock" },
+  { href: "/scheduled-orders", label: "Scheduled Orders" },
   { href: "/admin/directory", label: "Directory" },
   { href: "/admin/items", label: "Items" },
   { href: "/admin/bake-expected", label: "Bake Count" },
