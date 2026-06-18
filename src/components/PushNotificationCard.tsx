@@ -75,28 +75,21 @@ export default function PushNotificationCard() {
   }
 
   if (status === "subscribed") {
+    // Once on, this is just residual confirmation — keep it tiny and tucked to
+    // the right so it doesn't take up a whole card.
     return (
-      <div className={shell}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold text-white">
-              ✅ Notifications are on for this device
-            </h2>
-            <p className="mt-1 text-sm text-slate-400">
-              You&apos;ll get a push for waste over cap, fridge alerts, new
-              employee requests, and when every store finishes a cycle.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={unsubscribe}
-            disabled={busy}
-            className="rounded-full border border-white/15 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:bg-white/5 disabled:opacity-50"
-          >
-            {busy ? "…" : "Turn off"}
-          </button>
-        </div>
-        {error && <p className="mt-2 text-sm text-rose-300">{error}</p>}
+      <div className="flex items-center justify-end gap-2 text-xs text-slate-500">
+        <span>🔔 Notifications on</span>
+        <span aria-hidden>·</span>
+        <button
+          type="button"
+          onClick={unsubscribe}
+          disabled={busy}
+          className="text-slate-400 underline-offset-2 transition hover:text-slate-200 hover:underline disabled:opacity-50"
+        >
+          {busy ? "…" : "Turn off"}
+        </button>
+        {error && <span className="ml-2 text-rose-300">{error}</span>}
       </div>
     );
   }
