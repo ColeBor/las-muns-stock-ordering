@@ -239,6 +239,7 @@ export default function HomeAdminLinks() {
         <AdminLink href="/admin/items">Items</AdminLink>
         <AdminLink href="/admin/bake-expected">Bake Count</AdminLink>
         <AdminLink href="/admin/training">Training Resources</AdminLink>
+        <AdminLink href="/admin/announcements">Announcements</AdminLink>
       </AdminSection>
     </>
   );

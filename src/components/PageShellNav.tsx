@@ -55,6 +55,7 @@ const ADMIN_LINKS: Array<{ href: string; label: string }> = [
   { href: "/admin/items", label: "Items" },
   { href: "/admin/bake-expected", label: "Bake Count" },
   { href: "/admin/training", label: "Training Resources" },
+  { href: "/admin/announcements", label: "Announcements" },
 ];
 
 export default function PageShellNav() {
