@@ -66,9 +66,6 @@ type FactoryCountRow = {
   reserve_qty: number;
   sub_category: string | null;
   packaging_type: string | null;
-  // Transient "log production" input — not persisted; commit increments
-  // on_hand_qty by the typed amount. Always blank on (re)load.
-  add_qty?: number | null;
 };
 
 export default function FactoryStock() {
@@ -84,6 +81,13 @@ export default function FactoryStock() {
   const [gridData, setGridData] = useState<FactoryCountRow[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // "Log production" quick-entry — adds to an item's on-hand without the
+  // factory having to recompute the new total.
+  const [showProduction, setShowProduction] = useState(false);
+  const [prodItemId, setProdItemId] = useState("");
+  const [prodQty, setProdQty] = useState("");
+  const [prodSaving, setProdSaving] = useState(false);
 
   const isFactoryWorker = useMemo(() => profile?.role === "factory_worker", [profile]);
   const hasAssignedFactory = useMemo(() => !!profile?.factory_id, [profile]);
@@ -370,23 +374,13 @@ export default function FactoryStock() {
     }
 
     const { data, colDef, newValue } = params;
-    const isAdd = colDef.field === "add_qty";
-    if (colDef.field !== "available_qty" && !isAdd) return;
+    if (colDef.field !== "available_qty") return;
 
-    const entered = parseInt(newValue, 10);
-    if (Number.isNaN(entered) || entered < 0) {
-      setMessage(isAdd ? "Enter a valid quantity to add." : "Please enter a valid stock quantity.");
-      params.node.setDataValue(colDef.field, isAdd ? null : params.oldValue);
+    const qtyValue = parseInt(newValue, 10);
+    if (Number.isNaN(qtyValue) || qtyValue < 0) {
+      setMessage("Please enter a valid stock quantity.");
       return;
     }
-    // "Add (+)" logs production: it increments on-hand by the typed amount.
-    // "Available" is an absolute recount that overwrites it. A 0 in Add is a
-    // no-op (just clear the cell).
-    if (isAdd && entered === 0) {
-      params.node.setDataValue("add_qty", null);
-      return;
-    }
-    const newOnHand = isAdd ? data.available_qty + entered : entered;
 
     setLoading(true);
     setMessage(null);
@@ -394,7 +388,7 @@ export default function FactoryStock() {
     const payload = {
       factory_id: effectiveFactoryId,
       item_id: data.item_id,
-      on_hand_qty: newOnHand,
+      on_hand_qty: qtyValue,
       last_counted_at: new Date().toISOString(),
       counted_by: session?.user?.email ?? session?.user?.id ?? null,
     };
@@ -407,12 +401,53 @@ export default function FactoryStock() {
 
     if (error) {
       setMessage(error.message);
-      params.node.setDataValue(colDef.field, isAdd ? null : params.oldValue);
+      params.node.setDataValue(colDef.field, params.oldValue);
       return;
     }
 
-    setMessage(isAdd ? `Added ${entered} — now ${newOnHand}.` : "Stock count saved.");
-    if (isAdd) params.node.setDataValue("add_qty", null);
+    setMessage("Stock count saved.");
+    await loadInventory();
+  };
+
+  // Add freshly-baked stock to an item's on-hand. A relative increment so the
+  // factory doesn't have to know the running total — the auto-decrement on
+  // delivery and this addition keep Available current between recounts.
+  const handleLogProduction = async () => {
+    if (!canEdit || !effectiveFactoryId) return;
+    const qty = parseInt(prodQty, 10);
+    if (!prodItemId) {
+      setMessage("Pick an item.");
+      return;
+    }
+    if (Number.isNaN(qty) || qty <= 0) {
+      setMessage("Enter how many were made.");
+      return;
+    }
+    const row = gridData.find((r) => r.item_id === prodItemId);
+    const newOnHand = (row?.available_qty ?? 0) + qty;
+    setProdSaving(true);
+    setMessage(null);
+    const { error } = await supabase.from("factory_inventory").upsert(
+      [
+        {
+          factory_id: effectiveFactoryId,
+          item_id: prodItemId,
+          on_hand_qty: newOnHand,
+          last_counted_at: new Date().toISOString(),
+          counted_by: session?.user?.email ?? session?.user?.id ?? null,
+        },
+      ],
+      { onConflict: "factory_id,item_id" },
+    );
+    setProdSaving(false);
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+    setMessage(`Added ${qty} ${row?.item_name ?? ""} — now ${newOnHand}.`);
+    setProdItemId("");
+    setProdQty("");
+    setShowProduction(false);
     await loadInventory();
   };
 
@@ -432,19 +467,6 @@ export default function FactoryStock() {
       cellStyle: (params) => ({
         backgroundColor: params.data?.has_existing_count ? '#1f2937' : '#374151',
       }),
-    },
-    {
-      headerName: "Add (+)",
-      field: "add_qty",
-      width: 95,
-      editable: !isMasterView,
-      sortable: false,
-      filter: false,
-      cellEditor: "agNumberCellEditor",
-      cellEditorParams: { min: 0 },
-      headerTooltip: "Log production as you bake — adds to Available",
-      valueFormatter: (p) => (p.value == null || p.value === "" ? "" : String(p.value)),
-      cellStyle: () => ({ backgroundColor: '#0f2a44', color: '#7dd3fc' }),
     },
     { headerName: "Allocatable", field: "allocatable_qty", sortable: true, filter: true, width: 130,
       cellStyle: () => ({
@@ -610,6 +632,80 @@ export default function FactoryStock() {
             );
           })()}
 
+          {canEdit && (
+            <div>
+              {!showProduction ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowProduction(true);
+                    setMessage(null);
+                  }}
+                  className="rounded-full bg-sky-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-sky-400"
+                >
+                  ＋ Log production
+                </button>
+              ) : (
+                <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-white/10 bg-slate-900/60 p-4">
+                  <div>
+                    <label htmlFor="prod-item" className="block text-xs font-medium text-slate-300">
+                      Item
+                    </label>
+                    <select
+                      id="prod-item"
+                      value={prodItemId}
+                      onChange={(e) => setProdItemId(e.target.value)}
+                      className="mt-1 rounded-2xl border border-white/10 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400"
+                    >
+                      <option value="">(select item)</option>
+                      {gridData.map((r) => (
+                        <option key={r.item_id} value={r.item_id}>
+                          {r.item_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="prod-qty" className="block text-xs font-medium text-slate-300">
+                      Made
+                    </label>
+                    <input
+                      id="prod-qty"
+                      type="number"
+                      min={1}
+                      value={prodQty}
+                      onChange={(e) => setProdQty(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleLogProduction();
+                      }}
+                      placeholder="qty"
+                      className="mt-1 w-24 rounded-2xl border border-white/10 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleLogProduction}
+                    disabled={prodSaving || !prodItemId || !prodQty}
+                    className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:opacity-50"
+                  >
+                    {prodSaving ? "Adding…" : "Add"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowProduction(false);
+                      setProdItemId("");
+                      setProdQty("");
+                    }}
+                    className="text-sm text-slate-400 hover:text-slate-200"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           <div style={{ height: "calc(100vh - 300px)", minHeight: 500 }}>
             <AgGridReact
               rowData={gridData}
@@ -629,7 +725,7 @@ export default function FactoryStock() {
             <p><strong>Instructions:</strong></p>
             <ul className="list-disc list-inside mt-2 space-y-1">
               <li>Edit &quot;Available&quot; any time — counts roll forward independently of cycles. The allocator reads from this on every run and snapshots it for audit.</li>
-              <li><strong className="text-sky-300">Add (+):</strong> log production as you bake — type how many you just made and it&apos;s <em>added</em> to Available. Use &quot;Available&quot; instead when you want to set an exact recount.</li>
+              <li><strong className="text-sky-300">Log production</strong> (button above the grid): add what you just baked and it&apos;s <em>added</em> to Available. Edit &quot;Available&quot; directly to set an exact recount.</li>
               <li>Available drops <strong>automatically</strong> when a cycle is marked delivered — the quantities shipped out of this factory leave the count, so you don&apos;t have to re-subtract by hand.</li>
               <li>1 unit per factory is reserved automatically and excluded from Allocatable</li>
               <li>Changes are saved automatically when you finish editing a cell</li>
