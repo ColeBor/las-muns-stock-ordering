@@ -66,6 +66,9 @@ type FactoryCountRow = {
   reserve_qty: number;
   sub_category: string | null;
   packaging_type: string | null;
+  // Transient "log production" input — not persisted; commit increments
+  // on_hand_qty by the typed amount. Always blank on (re)load.
+  add_qty?: number | null;
 };
 
 export default function FactoryStock() {
@@ -367,13 +370,23 @@ export default function FactoryStock() {
     }
 
     const { data, colDef, newValue } = params;
-    if (colDef.field !== "available_qty") return;
+    const isAdd = colDef.field === "add_qty";
+    if (colDef.field !== "available_qty" && !isAdd) return;
 
-    const qtyValue = parseInt(newValue, 10);
-    if (Number.isNaN(qtyValue) || qtyValue < 0) {
-      setMessage("Please enter a valid stock quantity.");
+    const entered = parseInt(newValue, 10);
+    if (Number.isNaN(entered) || entered < 0) {
+      setMessage(isAdd ? "Enter a valid quantity to add." : "Please enter a valid stock quantity.");
+      params.node.setDataValue(colDef.field, isAdd ? null : params.oldValue);
       return;
     }
+    // "Add (+)" logs production: it increments on-hand by the typed amount.
+    // "Available" is an absolute recount that overwrites it. A 0 in Add is a
+    // no-op (just clear the cell).
+    if (isAdd && entered === 0) {
+      params.node.setDataValue("add_qty", null);
+      return;
+    }
+    const newOnHand = isAdd ? data.available_qty + entered : entered;
 
     setLoading(true);
     setMessage(null);
@@ -381,7 +394,7 @@ export default function FactoryStock() {
     const payload = {
       factory_id: effectiveFactoryId,
       item_id: data.item_id,
-      on_hand_qty: qtyValue,
+      on_hand_qty: newOnHand,
       last_counted_at: new Date().toISOString(),
       counted_by: session?.user?.email ?? session?.user?.id ?? null,
     };
@@ -394,11 +407,12 @@ export default function FactoryStock() {
 
     if (error) {
       setMessage(error.message);
-      params.node.setDataValue(colDef.field, params.oldValue);
+      params.node.setDataValue(colDef.field, isAdd ? null : params.oldValue);
       return;
     }
 
-    setMessage("Stock count saved.");
+    setMessage(isAdd ? `Added ${entered} — now ${newOnHand}.` : "Stock count saved.");
+    if (isAdd) params.node.setDataValue("add_qty", null);
     await loadInventory();
   };
 
@@ -418,6 +432,19 @@ export default function FactoryStock() {
       cellStyle: (params) => ({
         backgroundColor: params.data?.has_existing_count ? '#1f2937' : '#374151',
       }),
+    },
+    {
+      headerName: "Add (+)",
+      field: "add_qty",
+      width: 95,
+      editable: !isMasterView,
+      sortable: false,
+      filter: false,
+      cellEditor: "agNumberCellEditor",
+      cellEditorParams: { min: 0 },
+      headerTooltip: "Log production as you bake — adds to Available",
+      valueFormatter: (p) => (p.value == null || p.value === "" ? "" : String(p.value)),
+      cellStyle: () => ({ backgroundColor: '#0f2a44', color: '#7dd3fc' }),
     },
     { headerName: "Allocatable", field: "allocatable_qty", sortable: true, filter: true, width: 130,
       cellStyle: () => ({
@@ -602,6 +629,8 @@ export default function FactoryStock() {
             <p><strong>Instructions:</strong></p>
             <ul className="list-disc list-inside mt-2 space-y-1">
               <li>Edit &quot;Available&quot; any time — counts roll forward independently of cycles. The allocator reads from this on every run and snapshots it for audit.</li>
+              <li><strong className="text-sky-300">Add (+):</strong> log production as you bake — type how many you just made and it&apos;s <em>added</em> to Available. Use &quot;Available&quot; instead when you want to set an exact recount.</li>
+              <li>Available drops <strong>automatically</strong> when a cycle is marked delivered — the quantities shipped out of this factory leave the count, so you don&apos;t have to re-subtract by hand.</li>
               <li>1 unit per factory is reserved automatically and excluded from Allocatable</li>
               <li>Changes are saved automatically when you finish editing a cell</li>
               <li>Cells with darker backgrounds already have saved counts</li>
