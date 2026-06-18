@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
+import PushNotificationCard from "./PushNotificationCard";
 
 // Cache key bumped to v2 after the role-vocabulary rename — old localStorage
 // values like "hq_admin" / "store_manager" (worker) no longer map to the new
@@ -173,6 +174,8 @@ export default function HomeAdminLinks() {
 
   return (
     <>
+      <PushNotificationCard />
+
       <AdminSection title="Daily Reviews">
         <AdminLink
           href="/admin/temperature-alerts"
