@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
+import StandardThresholds from "./StandardThresholds";
 
 // One row per fridge that has at least one configured target. The view runs
 // with security_invoker so RLS on store_fridges / temperature_log_entries
@@ -211,6 +212,8 @@ export default function AdminTemperatureAlerts() {
         </div>
       ) : (
         <div className="mt-8 space-y-6">
+          <StandardThresholds />
+
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div className="text-sm text-slate-300">
               {loading

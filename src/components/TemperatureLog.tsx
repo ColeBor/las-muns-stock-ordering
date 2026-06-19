@@ -14,13 +14,14 @@ type Fridge = {
   id: string;
   store_id: string;
   name: string;
+  kind: "fridge" | "freezer";
+  // Effective thresholds, injected from the global temperature_targets for
+  // this unit's kind at load time (thresholds are no longer per-unit).
   target_min_c: number | null;
   target_max_c: number | null;
   severe_deviation_c: number | null;
   created_at: string;
 };
-
-type TargetDraft = { min: string; max: string; severe: string };
 
 type ReadingStatus = "in" | "out" | "severe" | "unknown";
 
@@ -86,9 +87,8 @@ export default function TemperatureLog() {
   const [draftTemps, setDraftTemps] = useState<Record<string, string>>({});
   const [draftNotes, setDraftNotes] = useState<Record<string, string>>({});
   const [savingFridgeId, setSavingFridgeId] = useState<string | null>(null);
-  const [editingTargetFridgeId, setEditingTargetFridgeId] = useState<string | null>(null);
-  const [targetDraft, setTargetDraft] = useState<TargetDraft>({ min: "", max: "", severe: "" });
-  const [savingTarget, setSavingTarget] = useState(false);
+  const [newFridgeKind, setNewFridgeKind] = useState<"fridge" | "freezer">("fridge");
+  const [savingKindId, setSavingKindId] = useState<string | null>(null);
 
   const hasAssignedStore = useMemo(() => !!profile?.store_id, [profile]);
   const effectiveStoreId = useMemo(
@@ -127,29 +127,53 @@ export default function TemperatureLog() {
       setFridges([]);
       return;
     }
-    const { data, error } = await supabase
-      .from("store_fridges")
-      .select("id,store_id,name,target_min_c,target_max_c,severe_deviation_c,created_at")
-      .eq("store_id", effectiveStoreId)
-      .order("name");
-    if (error) {
-      // Surface load errors so silent failures (e.g. a missing column from
-      // a pending migration) don't look like "no fridges exist."
-      setMessage(`Couldn't load fridges: ${error.message}`);
+    const [fridgesRes, targetsRes] = await Promise.all([
+      supabase
+        .from("store_fridges")
+        .select("id,store_id,name,kind,created_at")
+        .eq("store_id", effectiveStoreId)
+        .order("name"),
+      supabase
+        .from("temperature_targets")
+        .select("kind,target_min_c,target_max_c,severe_deviation_c"),
+    ]);
+    if (fridgesRes.error) {
+      setMessage(`Couldn't load fridges: ${fridgesRes.error.message}`);
       setFridges([]);
       return;
     }
-    if (data) {
-      setFridges(
-        (data as Fridge[]).map((f) => ({
-          ...f,
-          target_min_c: f.target_min_c === null ? null : Number(f.target_min_c),
-          target_max_c: f.target_max_c === null ? null : Number(f.target_max_c),
-          severe_deviation_c:
-            f.severe_deviation_c === null ? null : Number(f.severe_deviation_c),
-        })),
-      );
+    // Standard thresholds per kind (global), injected into each unit so the
+    // status / range helpers keep working off `fridge.target_*`.
+    const byKind: Record<string, { min: number | null; max: number | null; severe: number | null }> = {};
+    for (const t of (targetsRes.data as Array<{
+      kind: string;
+      target_min_c: number | null;
+      target_max_c: number | null;
+      severe_deviation_c: number | null;
+    }>) ?? []) {
+      byKind[t.kind] = {
+        min: t.target_min_c === null ? null : Number(t.target_min_c),
+        max: t.target_max_c === null ? null : Number(t.target_max_c),
+        severe: t.severe_deviation_c === null ? null : Number(t.severe_deviation_c),
+      };
     }
+    setFridges(
+      ((fridgesRes.data as Array<{
+        id: string;
+        store_id: string;
+        name: string;
+        kind: "fridge" | "freezer";
+        created_at: string;
+      }>) ?? []).map((f) => {
+        const t = byKind[f.kind] ?? { min: null, max: null, severe: null };
+        return {
+          ...f,
+          target_min_c: t.min,
+          target_max_c: t.max,
+          severe_deviation_c: t.severe,
+        };
+      }),
+    );
   }, [effectiveStoreId]);
 
   useEffect(() => {
@@ -196,6 +220,7 @@ export default function TemperatureLog() {
       ? [
           { table: "store_fridges", filter: `store_id=eq.${effectiveStoreId}` },
           { table: "temperature_log_entries", filter: `store_id=eq.${effectiveStoreId}` },
+          { table: "temperature_targets" },
         ]
       : [],
     useCallback(() => {
@@ -213,7 +238,7 @@ export default function TemperatureLog() {
     try {
       const { error } = await supabase
         .from("store_fridges")
-        .insert([{ store_id: effectiveStoreId, name: trimmed }]);
+        .insert([{ store_id: effectiveStoreId, name: trimmed, kind: newFridgeKind }]);
       if (error) {
         // Postgres unique_violation — friendly message instead of the raw
         // "duplicate key value violates unique constraint ..." string.
@@ -282,69 +307,30 @@ export default function TemperatureLog() {
     }
   };
 
-  const openTargetEditor = (fridge: Fridge) => {
-    setEditingTargetFridgeId(fridge.id);
-    setTargetDraft({
-      min: fridge.target_min_c === null ? "" : String(fridge.target_min_c),
-      max: fridge.target_max_c === null ? "" : String(fridge.target_max_c),
-      severe: fridge.severe_deviation_c === null ? "" : String(fridge.severe_deviation_c),
-    });
-    setMessage(null);
-  };
-
-  const cancelTargetEditor = () => {
-    setEditingTargetFridgeId(null);
-    setTargetDraft({ min: "", max: "", severe: "" });
-  };
-
-  const handleSaveTarget = async (fridgeId: string) => {
-    const parseField = (raw: string): number | null => {
-      const trimmed = raw.trim();
-      if (trimmed === "") return null;
-      const n = Number(trimmed);
-      return Number.isFinite(n) ? n : NaN;
-    };
-    const minVal = parseField(targetDraft.min);
-    const maxVal = parseField(targetDraft.max);
-    const severeVal = parseField(targetDraft.severe);
-    if (Number.isNaN(minVal) || Number.isNaN(maxVal) || Number.isNaN(severeVal)) {
-      setMessage("Targets must be numbers (or blank to clear).");
-      return;
-    }
-    if (minVal !== null && maxVal !== null && minVal > maxVal) {
-      setMessage("Min must be ≤ max.");
-      return;
-    }
-    if (severeVal !== null && severeVal <= 0) {
-      setMessage("Severe deviation must be greater than 0.");
-      return;
-    }
-    setSavingTarget(true);
+  // Reclassify a unit as fridge or freezer. Thresholds follow the kind
+  // (set globally in the Temperature Alerts admin), so this is the only
+  // per-unit temperature setting now.
+  const handleSetKind = async (fridgeId: string, kind: "fridge" | "freezer") => {
+    setSavingKindId(fridgeId);
     setMessage(null);
     try {
       const { error } = await supabase
         .from("store_fridges")
-        .update({
-          target_min_c: minVal,
-          target_max_c: maxVal,
-          severe_deviation_c: severeVal,
-        })
+        .update({ kind })
         .eq("id", fridgeId);
       if (error) {
         setMessage(error.message);
         return;
       }
-      cancelTargetEditor();
-      setMessage("Targets updated.");
       loadFridges();
     } catch (err) {
       setMessage(
         err instanceof Error
-          ? `Couldn't save targets: ${err.message}`
-          : "Couldn't save targets (network timeout). Try again.",
+          ? `Couldn't update type: ${err.message}`
+          : "Couldn't update type (network timeout). Try again.",
       );
     } finally {
-      setSavingTarget(false);
+      setSavingKindId(null);
     }
   };
 
@@ -476,7 +462,8 @@ export default function TemperatureLog() {
                 <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
                   <h3 className="text-lg font-semibold text-white">Fridges</h3>
                   <p className="mt-1 text-sm text-slate-400">
-                    Add each fridge or freezer here. Set its target range so we can flag bad readings.
+                    Add each fridge or freezer here and pick its type. Thresholds are
+                    standardized per type — set them in Temperature Alerts.
                   </p>
                   <div className="mt-4 flex flex-wrap items-center gap-2">
                     <input
@@ -489,6 +476,14 @@ export default function TemperatureLog() {
                         if (e.key === "Enter") handleAddFridge();
                       }}
                     />
+                    <select
+                      value={newFridgeKind}
+                      onChange={(e) => setNewFridgeKind(e.target.value as "fridge" | "freezer")}
+                      className="px-3 py-2 bg-slate-800 border border-slate-600 rounded text-white text-sm"
+                    >
+                      <option value="fridge">Fridge</option>
+                      <option value="freezer">Freezer</option>
+                    </select>
                     <button
                       type="button"
                       onClick={handleAddFridge}
@@ -512,7 +507,6 @@ export default function TemperatureLog() {
                   {fridges.map((fridge) => {
                     const latest = latestByFridge[fridge.id];
                     const status = latest ? readingStatus(latest.temperature_c, fridge) : null;
-                    const isEditingTarget = editingTargetFridgeId === fridge.id;
                     return (
                       <div
                         key={fridge.id}
@@ -536,87 +530,35 @@ export default function TemperatureLog() {
                           )}
                         </div>
                         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                          <span className="inline-flex items-center rounded-full bg-slate-800 px-2 py-0.5 font-semibold text-slate-200">
+                            {fridge.kind === "freezer" ? "❄️ Freezer" : "🧊 Fridge"}
+                          </span>
                           <span>{formatTargetRange(fridge)}</span>
                           {fridge.severe_deviation_c !== null && (
                             <span>· Spike if &gt; {fridge.severe_deviation_c}°C out</span>
                           )}
-                          {isStoreManager && !isEditingTarget && (
-                            <button
-                              type="button"
-                              onClick={() => openTargetEditor(fridge)}
-                              className="text-cyan-300 hover:text-cyan-200 underline-offset-2 hover:underline"
-                            >
-                              {fridge.target_min_c === null &&
-                              fridge.target_max_c === null &&
-                              fridge.severe_deviation_c === null
-                                ? "Set targets"
-                                : "Edit targets"}
-                            </button>
+                          {fridge.target_min_c === null && fridge.target_max_c === null && (
+                            <span className="text-amber-300">· standard not set</span>
                           )}
                         </div>
-                        {isEditingTarget && (
-                          <div className="mt-3 rounded-xl bg-slate-950/60 p-3 space-y-2">
-                            <div className="flex items-center gap-2 text-xs text-slate-300">
-                              <label className="w-12">Min °C</label>
-                              <input
-                                type="number"
-                                step="0.1"
-                                inputMode="decimal"
-                                value={targetDraft.min}
-                                onChange={(e) =>
-                                  setTargetDraft((prev) => ({ ...prev, min: e.target.value }))
-                                }
-                                placeholder="(any)"
-                                className="w-24 px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-sm"
-                              />
-                              <label className="w-12">Max °C</label>
-                              <input
-                                type="number"
-                                step="0.1"
-                                inputMode="decimal"
-                                value={targetDraft.max}
-                                onChange={(e) =>
-                                  setTargetDraft((prev) => ({ ...prev, max: e.target.value }))
-                                }
-                                placeholder="(any)"
-                                className="w-24 px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-sm"
-                              />
-                            </div>
-                            <div className="flex items-center gap-2 text-xs text-slate-300">
-                              <label className="w-full sm:w-32">Spike threshold</label>
-                              <input
-                                type="number"
-                                step="0.1"
-                                min="0"
-                                inputMode="decimal"
-                                value={targetDraft.severe}
-                                onChange={(e) =>
-                                  setTargetDraft((prev) => ({ ...prev, severe: e.target.value }))
-                                }
-                                placeholder="(off)"
-                                className="w-24 px-2 py-1 bg-slate-800 border border-slate-600 rounded text-white text-sm"
-                              />
-                              <span className="text-slate-500">
-                                °C — a single reading this far past target triggers a spike alert
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2">
+                        {isStoreManager && (
+                          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                            <span>Type:</span>
+                            {(["fridge", "freezer"] as const).map((k) => (
                               <button
+                                key={k}
                                 type="button"
-                                onClick={() => handleSaveTarget(fridge.id)}
-                                disabled={savingTarget}
-                                className="rounded-full bg-emerald-500 px-3 py-1 text-xs font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:opacity-50"
+                                onClick={() => handleSetKind(fridge.id, k)}
+                                disabled={savingKindId === fridge.id || fridge.kind === k}
+                                className={`rounded-full px-3 py-1 font-semibold transition disabled:cursor-default ${
+                                  fridge.kind === k
+                                    ? "bg-cyan-500 text-slate-950"
+                                    : "bg-slate-800 text-slate-200 hover:bg-slate-700"
+                                }`}
                               >
-                                {savingTarget ? "Saving..." : "Save targets"}
+                                {k === "freezer" ? "Freezer" : "Fridge"}
                               </button>
-                              <button
-                                type="button"
-                                onClick={cancelTargetEditor}
-                                className="text-xs text-slate-400 hover:text-slate-200"
-                              >
-                                Cancel
-                              </button>
-                            </div>
+                            ))}
                           </div>
                         )}
                         <div className="mt-4 flex flex-wrap items-center gap-2">
