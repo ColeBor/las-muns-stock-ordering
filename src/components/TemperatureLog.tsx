@@ -210,23 +210,32 @@ export default function TemperatureLog() {
     const trimmed = newFridgeName.trim();
     setSavingFridge(true);
     setMessage(null);
-    const { error } = await supabase
-      .from("store_fridges")
-      .insert([{ store_id: effectiveStoreId, name: trimmed }]);
-    setSavingFridge(false);
-    if (error) {
-      // Postgres unique_violation — friendly message instead of the raw
-      // "duplicate key value violates unique constraint ..." string.
-      if (error.code === "23505") {
-        setMessage(`A fridge named "${trimmed}" already exists in this store.`);
-      } else {
-        setMessage(error.message);
+    try {
+      const { error } = await supabase
+        .from("store_fridges")
+        .insert([{ store_id: effectiveStoreId, name: trimmed }]);
+      if (error) {
+        // Postgres unique_violation — friendly message instead of the raw
+        // "duplicate key value violates unique constraint ..." string.
+        if (error.code === "23505") {
+          setMessage(`A fridge named "${trimmed}" already exists in this store.`);
+        } else {
+          setMessage(error.message);
+        }
+        return;
       }
-      return;
+      setNewFridgeName("");
+      setMessage("Fridge added.");
+      loadFridges();
+    } catch (err) {
+      setMessage(
+        err instanceof Error
+          ? `Couldn't add fridge: ${err.message}`
+          : "Couldn't add fridge (network timeout). Try again.",
+      );
+    } finally {
+      setSavingFridge(false);
     }
-    setNewFridgeName("");
-    setMessage("Fridge added.");
-    loadFridges();
   };
 
   const handleRecord = async (fridgeId: string) => {
@@ -244,24 +253,33 @@ export default function TemperatureLog() {
     setSavingFridgeId(fridgeId);
     setMessage(null);
     const note = draftNotes[fridgeId]?.trim() || null;
-    const { error } = await supabase.from("temperature_log_entries").insert([
-      {
-        store_id: effectiveStoreId,
-        fridge_id: fridgeId,
-        temperature_c: value,
-        recorded_by: session?.user?.email ?? session?.user?.id ?? null,
-        notes: note,
-      },
-    ]);
-    setSavingFridgeId(null);
-    if (error) {
-      setMessage(error.message);
-      return;
+    try {
+      const { error } = await supabase.from("temperature_log_entries").insert([
+        {
+          store_id: effectiveStoreId,
+          fridge_id: fridgeId,
+          temperature_c: value,
+          recorded_by: session?.user?.email ?? session?.user?.id ?? null,
+          notes: note,
+        },
+      ]);
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      setDraftTemps((prev) => ({ ...prev, [fridgeId]: "" }));
+      setDraftNotes((prev) => ({ ...prev, [fridgeId]: "" }));
+      setMessage("Reading saved.");
+      loadEntries();
+    } catch (err) {
+      setMessage(
+        err instanceof Error
+          ? `Couldn't save reading: ${err.message}`
+          : "Couldn't save reading (network timeout). Try again.",
+      );
+    } finally {
+      setSavingFridgeId(null);
     }
-    setDraftTemps((prev) => ({ ...prev, [fridgeId]: "" }));
-    setDraftNotes((prev) => ({ ...prev, [fridgeId]: "" }));
-    setMessage("Reading saved.");
-    loadEntries();
   };
 
   const openTargetEditor = (fridge: Fridge) => {
@@ -303,22 +321,31 @@ export default function TemperatureLog() {
     }
     setSavingTarget(true);
     setMessage(null);
-    const { error } = await supabase
-      .from("store_fridges")
-      .update({
-        target_min_c: minVal,
-        target_max_c: maxVal,
-        severe_deviation_c: severeVal,
-      })
-      .eq("id", fridgeId);
-    setSavingTarget(false);
-    if (error) {
-      setMessage(error.message);
-      return;
+    try {
+      const { error } = await supabase
+        .from("store_fridges")
+        .update({
+          target_min_c: minVal,
+          target_max_c: maxVal,
+          severe_deviation_c: severeVal,
+        })
+        .eq("id", fridgeId);
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      cancelTargetEditor();
+      setMessage("Targets updated.");
+      loadFridges();
+    } catch (err) {
+      setMessage(
+        err instanceof Error
+          ? `Couldn't save targets: ${err.message}`
+          : "Couldn't save targets (network timeout). Try again.",
+      );
+    } finally {
+      setSavingTarget(false);
     }
-    cancelTargetEditor();
-    setMessage("Targets updated.");
-    loadFridges();
   };
 
   const handleDeleteEntry = async (entryId: string) => {
