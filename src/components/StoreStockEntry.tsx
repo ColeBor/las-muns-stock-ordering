@@ -128,56 +128,56 @@ export default function StoreStockEntry() {
     setMessage(null);
     const newValue = finishedAt ? null : new Date().toISOString();
 
-    // When FINISHING, sweep any active grid rows that don't yet have a
-    // stock_entries row and write them at their current grid value
-    // (typically 0). The per-cell upsert only fires when the value
-    // actually changes, so a store with genuine zeros on the default 0
-    // cells could mark Finish without saving a single row — invisible to
-    // the allocator. Writing the zeros explicitly fixes that.
-    if (newValue) {
-      const missing = gridData
-        .filter((r) => r.is_active && !r.has_existing_entry)
-        .map((r) => ({
-          cycle_id: selectedCycleId,
-          store_id: effectiveStoreId,
-          item_id: r.item_id,
-          current_count: r.current_count,
-          entered_by: session?.user?.email ?? session?.user?.id ?? null,
-        }));
-      if (missing.length > 0) {
-        // INSERT-only (ON CONFLICT DO NOTHING): backfill the rows the worker
-        // never touched at their default (0), but NEVER overwrite a value they
-        // already saved. Clicking Finish right after editing a cell races the
-        // per-cell save and, with a plain (overwriting) upsert, this sweep
-        // could clobber the just-typed value with a stale 0 read from gridData
-        // — the "order sheet didn't keep my last value" bug.
-        const { error: upsertErr } = await supabase
-          .from("stock_entries")
-          .upsert(missing, {
-            onConflict: "cycle_id,store_id,item_id",
-            ignoreDuplicates: true,
-          });
-        if (upsertErr) {
-          setMessage(upsertErr.message);
-          setFinishToggling(false);
-          return;
+    try {
+      // When FINISHING, sweep any active grid rows that don't yet have a
+      // stock_entries row and write them at their current grid value
+      // (typically 0). INSERT-only (ON CONFLICT DO NOTHING) so it backfills
+      // untouched rows without ever clobbering a value the worker just saved.
+      if (newValue) {
+        const missing = gridData
+          .filter((r) => r.is_active && !r.has_existing_entry)
+          .map((r) => ({
+            cycle_id: selectedCycleId,
+            store_id: effectiveStoreId,
+            item_id: r.item_id,
+            current_count: r.current_count,
+            entered_by: session?.user?.email ?? session?.user?.id ?? null,
+          }));
+        if (missing.length > 0) {
+          const { error: upsertErr } = await supabase
+            .from("stock_entries")
+            .upsert(missing, {
+              onConflict: "cycle_id,store_id,item_id",
+              ignoreDuplicates: true,
+            });
+          if (upsertErr) {
+            setMessage(upsertErr.message);
+            return;
+          }
         }
       }
-    }
 
-    const { error } = await supabase
-      .from("cycle_stores")
-      .update({ finished_at: newValue })
-      .eq("cycle_id", selectedCycleId)
-      .eq("store_id", effectiveStoreId);
-    setFinishToggling(false);
-    if (error) {
-      setMessage(error.message);
-      return;
+      const { error } = await supabase
+        .from("cycle_stores")
+        .update({ finished_at: newValue })
+        .eq("cycle_id", selectedCycleId)
+        .eq("store_id", effectiveStoreId);
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      setFinishedAt(newValue);
+      setMessage(newValue ? "Marked as finished." : "Reopened for editing.");
+      if (newValue) await loadEntries();
+    } catch (err) {
+      setMessage(
+        err instanceof Error
+          ? `Couldn't update: ${err.message}`
+          : "Couldn't update (network timeout). Try again.",
+      );
+    } finally {
+      setFinishToggling(false);
     }
-    setFinishedAt(newValue);
-    setMessage(newValue ? "Marked as finished." : "Reopened for editing.");
-    if (newValue) await loadEntries();
   };
 
   useEffect(() => {

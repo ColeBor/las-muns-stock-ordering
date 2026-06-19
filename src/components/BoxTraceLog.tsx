@@ -258,15 +258,24 @@ export default function BoxTraceLog() {
       box_prepared_on: boxPreparedOn,
       recorded_by: session?.user?.email ?? session?.user?.id ?? null,
     };
-    const { error } = await supabase.from("box_trace_entries").insert([payload]);
-    setSaving(false);
-    if (error) {
-      setMessage(error.message);
-      return;
+    try {
+      const { error } = await supabase.from("box_trace_entries").insert([payload]);
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      setMessage("Box trace logged.");
+      resetForm();
+      loadEntries();
+    } catch (err) {
+      setMessage(
+        err instanceof Error
+          ? `Couldn't log box: ${err.message}`
+          : "Couldn't log box (network timeout). Try again.",
+      );
+    } finally {
+      setSaving(false);
     }
-    setMessage("Box trace logged.");
-    resetForm();
-    loadEntries();
   };
 
   const handleDeleteEntry = async (entryId: string) => {

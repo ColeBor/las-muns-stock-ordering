@@ -251,15 +251,24 @@ export default function WasteLog() {
       wasted_on: wastedOn,
       recorded_by: session?.user?.email ?? session?.user?.id ?? null,
     };
-    const { error } = await supabase.from("waste_log_entries").insert([payload]);
-    setSaving(false);
-    if (error) {
-      setMessage(error.message);
-      return;
+    try {
+      const { error } = await supabase.from("waste_log_entries").insert([payload]);
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      setMessage("Waste logged.");
+      resetForm();
+      loadEntries();
+    } catch (err) {
+      setMessage(
+        err instanceof Error
+          ? `Couldn't log waste: ${err.message}`
+          : "Couldn't log waste (network timeout). Try again.",
+      );
+    } finally {
+      setSaving(false);
     }
-    setMessage("Waste logged.");
-    resetForm();
-    loadEntries();
   };
 
   const handleDeleteEntry = async (entryId: string) => {

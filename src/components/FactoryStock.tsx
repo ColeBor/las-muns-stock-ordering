@@ -393,20 +393,27 @@ export default function FactoryStock() {
       counted_by: session?.user?.email ?? session?.user?.id ?? null,
     };
 
-    const { error } = await supabase
-      .from("factory_inventory")
-      .upsert([payload], { onConflict: "factory_id,item_id" });
-
-    setLoading(false);
-
-    if (error) {
-      setMessage(error.message);
+    try {
+      const { error } = await supabase
+        .from("factory_inventory")
+        .upsert([payload], { onConflict: "factory_id,item_id" });
+      if (error) {
+        setMessage(error.message);
+        params.node.setDataValue(colDef.field, params.oldValue);
+        return;
+      }
+      setMessage("Stock count saved.");
+      await loadInventory();
+    } catch (err) {
+      setMessage(
+        err instanceof Error
+          ? `Couldn't save: ${err.message}`
+          : "Couldn't save (network timeout). Try again.",
+      );
       params.node.setDataValue(colDef.field, params.oldValue);
-      return;
+    } finally {
+      setLoading(false);
     }
-
-    setMessage("Stock count saved.");
-    await loadInventory();
   };
 
   // Add freshly-baked stock to an item's on-hand. A relative increment so the
@@ -427,28 +434,37 @@ export default function FactoryStock() {
     const newOnHand = (row?.available_qty ?? 0) + qty;
     setProdSaving(true);
     setMessage(null);
-    const { error } = await supabase.from("factory_inventory").upsert(
-      [
-        {
-          factory_id: effectiveFactoryId,
-          item_id: prodItemId,
-          on_hand_qty: newOnHand,
-          last_counted_at: new Date().toISOString(),
-          counted_by: session?.user?.email ?? session?.user?.id ?? null,
-        },
-      ],
-      { onConflict: "factory_id,item_id" },
-    );
-    setProdSaving(false);
-    if (error) {
-      setMessage(error.message);
-      return;
+    try {
+      const { error } = await supabase.from("factory_inventory").upsert(
+        [
+          {
+            factory_id: effectiveFactoryId,
+            item_id: prodItemId,
+            on_hand_qty: newOnHand,
+            last_counted_at: new Date().toISOString(),
+            counted_by: session?.user?.email ?? session?.user?.id ?? null,
+          },
+        ],
+        { onConflict: "factory_id,item_id" },
+      );
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      setMessage(`Added ${qty} ${row?.item_name ?? ""} — now ${newOnHand}.`);
+      setProdItemId("");
+      setProdQty("");
+      setShowProduction(false);
+      await loadInventory();
+    } catch (err) {
+      setMessage(
+        err instanceof Error
+          ? `Couldn't add production: ${err.message}`
+          : "Couldn't add production (network timeout). Try again.",
+      );
+    } finally {
+      setProdSaving(false);
     }
-    setMessage(`Added ${qty} ${row?.item_name ?? ""} — now ${newOnHand}.`);
-    setProdItemId("");
-    setProdQty("");
-    setShowProduction(false);
-    await loadInventory();
   };
 
   const columnDefs: ColDef<FactoryCountRow>[] = [

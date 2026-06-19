@@ -134,54 +134,71 @@ export default function AdminWasteAlerts() {
   }, [rows, showAll, showResolved]);
 
   const handleSaveDefault = async () => {
-    setSavingDefault(true);
     setDefaultMessage(null);
     const trimmed = defaultCapInput.trim();
     const parsed = trimmed === "" ? null : parseInt(trimmed, 10);
     if (parsed !== null && (!Number.isFinite(parsed) || parsed <= 0)) {
-      setSavingDefault(false);
       setDefaultMessage("Default cap must be a positive whole number, or blank to disable.");
       return;
     }
-    const { error } = await supabase
-      .from("app_config")
-      .update({
-        default_daily_waste_cap: parsed,
-        updated_at: new Date().toISOString(),
-        updated_by: session?.user?.email ?? session?.user?.id ?? null,
-      })
-      .eq("id", true);
-    setSavingDefault(false);
-    if (error) {
-      setDefaultMessage(error.message);
-      return;
+    setSavingDefault(true);
+    try {
+      const { error } = await supabase
+        .from("app_config")
+        .update({
+          default_daily_waste_cap: parsed,
+          updated_at: new Date().toISOString(),
+          updated_by: session?.user?.email ?? session?.user?.id ?? null,
+        })
+        .eq("id", true);
+      if (error) {
+        setDefaultMessage(error.message);
+        return;
+      }
+      setDefaultMessage("Default cap saved.");
+      setDefaultCap(parsed);
+      loadAlerts();
+    } catch (err) {
+      setDefaultMessage(
+        err instanceof Error
+          ? `Couldn't save: ${err.message}`
+          : "Couldn't save (network timeout). Try again.",
+      );
+    } finally {
+      setSavingDefault(false);
     }
-    setDefaultMessage("Default cap saved.");
-    setDefaultCap(parsed);
-    loadAlerts();
   };
 
   const handleResolve = async (row: WasteCapAlertRow) => {
     setSavingResolution(true);
     setMessage(null);
-    const { error } = await supabase.from("waste_cap_resolutions").upsert(
-      {
-        store_id: row.store_id,
-        wasted_on: row.wasted_on,
-        resolved_at: new Date().toISOString(),
-        resolved_by: session?.user?.email ?? session?.user?.id ?? null,
-        note: resolveNote.trim() || null,
-      },
-      { onConflict: "store_id,wasted_on" },
-    );
-    setSavingResolution(false);
-    if (error) {
-      setMessage(error.message);
-      return;
+    try {
+      const { error } = await supabase.from("waste_cap_resolutions").upsert(
+        {
+          store_id: row.store_id,
+          wasted_on: row.wasted_on,
+          resolved_at: new Date().toISOString(),
+          resolved_by: session?.user?.email ?? session?.user?.id ?? null,
+          note: resolveNote.trim() || null,
+        },
+        { onConflict: "store_id,wasted_on" },
+      );
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      setResolvingKey(null);
+      setResolveNote("");
+      loadAlerts();
+    } catch (err) {
+      setMessage(
+        err instanceof Error
+          ? `Couldn't resolve: ${err.message}`
+          : "Couldn't resolve (network timeout). Try again.",
+      );
+    } finally {
+      setSavingResolution(false);
     }
-    setResolvingKey(null);
-    setResolveNote("");
-    loadAlerts();
   };
 
   const handleUnresolve = async (row: WasteCapAlertRow) => {
