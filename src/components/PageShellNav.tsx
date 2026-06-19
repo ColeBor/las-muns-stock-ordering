@@ -58,11 +58,17 @@ const ADMIN_LINKS: Array<{ href: string; label: string }> = [
   { href: "/admin/announcements", label: "Announcements" },
 ];
 
+// Factory Workers only ever go one place.
+const FACTORY_LINKS: Array<{ href: string; label: string }> = [
+  { href: "/factory-stock", label: "Factory Stock" },
+];
+
 export default function PageShellNav() {
   // Hydrate from localStorage so the right link set appears immediately
   // without a profile fetch round-trip; the live fetch below corrects it
   // if the cache is stale.
   const [isStoreManager, setIsStoreManager] = useState<boolean | null>(null);
+  const [isFactoryWorker, setIsFactoryWorker] = useState(false);
   const [storeId, setStoreId] = useState<string | null>(null);
   // Admin alerts (counts)
   const [tempAlertCount, setTempAlertCount] = useState(0);
@@ -78,13 +84,17 @@ export default function PageShellNav() {
     const cached = typeof window !== "undefined" ? localStorage.getItem(ROLE_CACHE_KEY) : null;
     if (cached === "store_manager") setIsStoreManager(true);
     else if (cached) setIsStoreManager(false);
+    setIsFactoryWorker(cached === "factory_worker");
 
     let alive = true;
     const refresh = async () => {
       const { data: sessionData } = await supabase.auth.getSession();
       const userId = sessionData.session?.user?.id;
       if (!userId) {
-        if (alive) setIsStoreManager(false);
+        if (alive) {
+          setIsStoreManager(false);
+          setIsFactoryWorker(false);
+        }
         return;
       }
       const { data } = await supabase
@@ -96,6 +106,7 @@ export default function PageShellNav() {
       const sid = (data?.store_id ?? null) as string | null;
       if (alive) {
         setIsStoreManager(role === "store_manager");
+        setIsFactoryWorker(role === "factory_worker");
         setStoreId(sid);
       }
       if (role) localStorage.setItem(ROLE_CACHE_KEY, role);
@@ -322,9 +333,9 @@ export default function PageShellNav() {
   // Also hide the link for the current page so the nav only shows places
   // you can jump TO.
   const pathname = usePathname();
-  const links = (isStoreManager ? ADMIN_LINKS : EMPLOYEE_LINKS).filter(
-    (l) => l.href !== pathname,
-  );
+  const links = (
+    isFactoryWorker ? FACTORY_LINKS : isStoreManager ? ADMIN_LINKS : EMPLOYEE_LINKS
+  ).filter((l) => l.href !== pathname);
 
   // For admin pages we have a numeric count; for employee pages we only
   // know "needs attention" as a boolean. The render uses `count` when known
@@ -352,7 +363,7 @@ export default function PageShellNav() {
       <Link href="/" className={PILL_CLASS}>
         <span aria-hidden>⌂</span> Home
       </Link>
-      <StorePicker />
+      {!isFactoryWorker && <StorePicker />}
 
       {links.map((l) => {
         const alert = alertFor(l.href);

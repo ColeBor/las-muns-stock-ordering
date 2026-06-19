@@ -30,6 +30,9 @@ function startOfTodayIso(): string {
 
 export default function HomeGate() {
   const { session, profile, loading: authLoading } = useAuthGate();
+  // Factory Workers get a stripped-down home: just the Factory Stock entry,
+  // none of the store-oriented sections (which they can't use anyway).
+  const isFactoryWorker = profile?.role === "factory_worker";
 
   // Per-employee daily alerts shown as ⚠ on the home-page buttons. Each is
   // computed independently; if a query fails the flag stays false and the
@@ -217,12 +220,28 @@ export default function HomeGate() {
                 <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
                   Las Muns
                 </h1>
-                <StorePicker />
+                {!isFactoryWorker && <StorePicker />}
               </div>
 
               <AnnouncementsFeed />
 
               <div className="space-y-4">
+                {isFactoryWorker && (
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Factory</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <Link
+                        href="/factory-stock"
+                        className="inline-flex items-center justify-center rounded-full bg-amber-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-amber-400"
+                      >
+                        Factory Stock
+                      </Link>
+                    </div>
+                  </div>
+                )}
+
+                {!isFactoryWorker && (
+                  <>
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Ordering</p>
                   <div className="mt-2 flex flex-wrap gap-2">
@@ -288,6 +307,8 @@ export default function HomeGate() {
                     </Link>
                   </div>
                 </div>
+                  </>
+                )}
 
                 <HomeAdminLinks />
               </div>
