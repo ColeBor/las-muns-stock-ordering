@@ -211,34 +211,47 @@ export default function AdminItemsList({
     setActivateAtItem(item);
     setActivateRows([]);
     setActivateLoading(true);
-    const [storesRes, storeItemsRes] = await Promise.all([
-      supabase.from("stores").select("id,name").order("name"),
-      supabase
-        .from("store_items")
-        .select("store_id,is_active")
-        .eq("item_id", item.id),
-    ]);
-    setActivateLoading(false);
-    if (storesRes.error || !storesRes.data) {
-      setMessage(storesRes.error?.message ?? "Failed to load stores");
+    // Wrap in try/finally: supabase-js caps each request at 10s and rejects on
+    // timeout. Without this, a stalled "stores" fetch left activateLoading
+    // stuck true → the modal spun forever ("infinite loading").
+    try {
+      const [storesRes, storeItemsRes] = await Promise.all([
+        supabase.from("stores").select("id,name").order("name"),
+        supabase
+          .from("store_items")
+          .select("store_id,is_active")
+          .eq("item_id", item.id),
+      ]);
+      if (storesRes.error || !storesRes.data) {
+        setMessage(storesRes.error?.message ?? "Failed to load stores");
+        setActivateAtItem(null);
+        return;
+      }
+      const activeMap = new Map<string, boolean>();
+      (storeItemsRes.data ?? []).forEach((si) => {
+        activeMap.set(si.store_id as string, !!si.is_active);
+      });
+      setActivateRows(
+        storesRes.data.map((s) => {
+          const active = activeMap.get(s.id) ?? false;
+          return {
+            store_id: s.id,
+            store_name: s.name,
+            active,
+            original_active: active,
+          };
+        }),
+      );
+    } catch (err) {
+      setMessage(
+        err instanceof Error
+          ? `Couldn't load stores: ${err.message}`
+          : "Couldn't load stores (network timeout). Try again.",
+      );
       setActivateAtItem(null);
-      return;
+    } finally {
+      setActivateLoading(false);
     }
-    const activeMap = new Map<string, boolean>();
-    (storeItemsRes.data ?? []).forEach((si) => {
-      activeMap.set(si.store_id as string, !!si.is_active);
-    });
-    setActivateRows(
-      storesRes.data.map((s) => {
-        const active = activeMap.get(s.id) ?? false;
-        return {
-          store_id: s.id,
-          store_name: s.name,
-          active,
-          original_active: active,
-        };
-      }),
-    );
   };
 
   const closeActivateAt = () => {
