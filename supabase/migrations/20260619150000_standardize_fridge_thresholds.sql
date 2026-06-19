@@ -40,9 +40,12 @@ create policy "Temp targets: store managers manage" on public.temperature_target
   for all using (public.is_store_manager()) with check (public.is_store_manager());
 
 -- 3. Rewrite fridge_alerts to source thresholds from temperature_targets via
---    the unit's kind. Existing columns keep their name/order/type (required by
---    CREATE OR REPLACE); `kind` is appended at the end.
-create or replace view public.fridge_alerts with (security_invoker = on) as
+--    the unit's kind. DROP + CREATE (not CREATE OR REPLACE): the threshold
+--    columns now come from temperature_targets, whose numeric type differs
+--    from store_fridges', and CREATE OR REPLACE VIEW can't change a column's
+--    data type. Dropping first sidesteps that.
+drop view if exists public.fridge_alerts;
+create view public.fridge_alerts with (security_invoker = on) as
 with ranked as (
   select
     e.fridge_id,
