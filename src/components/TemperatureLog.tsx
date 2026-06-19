@@ -89,6 +89,7 @@ export default function TemperatureLog() {
   const [savingFridgeId, setSavingFridgeId] = useState<string | null>(null);
   const [newFridgeKind, setNewFridgeKind] = useState<"fridge" | "freezer">("fridge");
   const [savingKindId, setSavingKindId] = useState<string | null>(null);
+  const [deletingFridgeId, setDeletingFridgeId] = useState<string | null>(null);
 
   const hasAssignedStore = useMemo(() => !!profile?.store_id, [profile]);
   const effectiveStoreId = useMemo(
@@ -334,6 +335,39 @@ export default function TemperatureLog() {
     }
   };
 
+  // Remove a fridge/freezer entirely. Its temperature_log_entries cascade-
+  // delete with it (FK on delete cascade), so this also clears that unit's
+  // reading history.
+  const handleDeleteFridge = async (fridge: Fridge) => {
+    if (
+      !confirm(
+        `Delete "${fridge.name}"? This removes the unit and all of its recorded temperature readings. This can't be undone.`,
+      )
+    ) {
+      return;
+    }
+    setDeletingFridgeId(fridge.id);
+    setMessage(null);
+    try {
+      const { error } = await supabase.from("store_fridges").delete().eq("id", fridge.id);
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      setMessage(`"${fridge.name}" deleted.`);
+      loadFridges();
+      loadEntries();
+    } catch (err) {
+      setMessage(
+        err instanceof Error
+          ? `Couldn't delete: ${err.message}`
+          : "Couldn't delete (network timeout). Try again.",
+      );
+    } finally {
+      setDeletingFridgeId(null);
+    }
+  };
+
   const handleDeleteEntry = async (entryId: string) => {
     setMessage(null);
     const { error } = await supabase.from("temperature_log_entries").delete().eq("id", entryId);
@@ -559,6 +593,14 @@ export default function TemperatureLog() {
                                 {k === "freezer" ? "Freezer" : "Fridge"}
                               </button>
                             ))}
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteFridge(fridge)}
+                              disabled={deletingFridgeId === fridge.id}
+                              className="ml-auto text-rose-300 hover:text-rose-200 underline-offset-2 hover:underline disabled:opacity-50"
+                            >
+                              {deletingFridgeId === fridge.id ? "Deleting…" : "Delete"}
+                            </button>
                           </div>
                         )}
                         <div className="mt-4 flex flex-wrap items-center gap-2">
