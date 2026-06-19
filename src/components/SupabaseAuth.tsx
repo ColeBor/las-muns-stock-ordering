@@ -191,64 +191,69 @@ export default function SupabaseAuth() {
     setAdminLoading(true);
     setAdminMessage(null);
 
-    if (currentlyAssigned) {
-      const { error } = await supabase
-        .from("profile_stores")
-        .delete()
-        .eq("user_id", userId)
-        .eq("store_id", storeId);
-      if (error) {
-        setAdminLoading(false);
-        setAdminMessage(error.message);
-        return;
+    try {
+      if (currentlyAssigned) {
+        const { error } = await supabase
+          .from("profile_stores")
+          .delete()
+          .eq("user_id", userId)
+          .eq("store_id", storeId);
+        if (error) {
+          setAdminMessage(error.message);
+          return;
+        }
+      } else {
+        const { error } = await supabase
+          .from("profile_stores")
+          .insert([{ user_id: userId, store_id: storeId }]);
+        if (error) {
+          setAdminMessage(error.message);
+          return;
+        }
       }
-    } else {
-      const { error } = await supabase
-        .from("profile_stores")
-        .insert([{ user_id: userId, store_id: storeId }]);
-      if (error) {
-        setAdminLoading(false);
-        setAdminMessage(error.message);
-        return;
+
+      // Keep profiles.store_id consistent with the new assignment set.
+      const user = allProfiles.find((p) => p.id === userId);
+      const newAssigned = currentlyAssigned
+        ? (profileStoresByUser[userId] ?? []).filter((s) => s !== storeId)
+        : [...(profileStoresByUser[userId] ?? []), storeId];
+      let newActive: string | null = user?.store_id ?? null;
+      if (newActive && !newAssigned.includes(newActive)) {
+        newActive = newAssigned[0] ?? null;
+      } else if (!newActive && newAssigned.length > 0) {
+        newActive = newAssigned[0];
       }
-    }
-
-    // Keep profiles.store_id consistent with the new assignment set.
-    const user = allProfiles.find((p) => p.id === userId);
-    const newAssigned = currentlyAssigned
-      ? (profileStoresByUser[userId] ?? []).filter((s) => s !== storeId)
-      : [...(profileStoresByUser[userId] ?? []), storeId];
-    let newActive: string | null = user?.store_id ?? null;
-    if (newActive && !newAssigned.includes(newActive)) {
-      newActive = newAssigned[0] ?? null;
-    } else if (!newActive && newAssigned.length > 0) {
-      newActive = newAssigned[0];
-    }
-    if (newActive !== (user?.store_id ?? null)) {
-      await supabase
-        .from("profiles")
-        .update({ store_id: newActive })
-        .eq("id", userId);
-    }
-
-    // Reload admin data for fresh state.
-    const [profilesRes, psRes] = await Promise.all([
-      supabase.from("profiles").select("id,email,display_name,role,store_id,factory_id"),
-      supabase.from("profile_stores").select("user_id,store_id"),
-    ]);
-    if (!profilesRes.error && profilesRes.data) {
-      setAllProfiles(profilesRes.data as Profile[]);
-    }
-    if (!psRes.error && psRes.data) {
-      const map: Record<string, string[]> = {};
-      for (const row of psRes.data as Array<{ user_id: string; store_id: string }>) {
-        (map[row.user_id] ??= []).push(row.store_id);
+      if (newActive !== (user?.store_id ?? null)) {
+        await supabase
+          .from("profiles")
+          .update({ store_id: newActive })
+          .eq("id", userId);
       }
-      setProfileStoresByUser(map);
-    }
 
-    setAdminLoading(false);
-    setAdminMessage("Assignment updated.");
+      // Reload admin data for fresh state.
+      const [profilesRes, psRes] = await Promise.all([
+        supabase.from("profiles").select("id,email,display_name,role,store_id,factory_id"),
+        supabase.from("profile_stores").select("user_id,store_id"),
+      ]);
+      if (!profilesRes.error && profilesRes.data) {
+        setAllProfiles(profilesRes.data as Profile[]);
+      }
+      if (!psRes.error && psRes.data) {
+        const map: Record<string, string[]> = {};
+        for (const row of psRes.data as Array<{ user_id: string; store_id: string }>) {
+          (map[row.user_id] ??= []).push(row.store_id);
+        }
+        setProfileStoresByUser(map);
+      }
+
+      setAdminMessage("Assignment updated.");
+    } catch (err) {
+      setAdminMessage(
+        `Couldn't update assignment: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
+      );
+    } finally {
+      setAdminLoading(false);
+    }
   };
 
   const signInWithPassword = async (event: FormEvent) => {
@@ -256,17 +261,23 @@ export default function SupabaseAuth() {
     setLoading(true);
     setMessage(null);
 
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    setLoading(false);
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
 
-    if (error) {
-      setMessage(error.message);
-      return;
+      setMessage("Signed in successfully!");
+      setEmail("");
+      setPassword("");
+    } catch (err) {
+      setMessage(
+        `Couldn't sign in: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
+      );
+    } finally {
+      setLoading(false);
     }
-
-    setMessage("Signed in successfully!");
-    setEmail("");
-    setPassword("");
   };
 
   const signInWithOtp = async (event: FormEvent) => {
@@ -274,17 +285,23 @@ export default function SupabaseAuth() {
     setLoading(true);
     setMessage(null);
 
-    const { error } = await supabase.auth.signInWithOtp({ email });
-    setLoading(false);
+    try {
+      const { error } = await supabase.auth.signInWithOtp({ email });
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
 
-    if (error) {
-      setMessage(error.message);
-      return;
+      setMessage("Check your email for a magic sign-in link.");
+      setEmail("");
+      setPassword("");
+    } catch (err) {
+      setMessage(
+        `Couldn't send magic link: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
+      );
+    } finally {
+      setLoading(false);
     }
-
-    setMessage("Check your email for a magic sign-in link.");
-    setEmail("");
-    setPassword("");
   };
 
   const updateProfile = async (
@@ -294,33 +311,45 @@ export default function SupabaseAuth() {
     setAdminLoading(true);
     setAdminMessage(null);
 
-    const { error } = await supabase
-      .from("profiles")
-      .update(patch)
-      .eq("id", profileId);
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .update(patch)
+        .eq("id", profileId);
 
-    setAdminLoading(false);
+      if (error) {
+        setAdminMessage(error.message);
+        return;
+      }
 
-    if (error) {
-      setAdminMessage(error.message);
-      return;
-    }
+      setAdminMessage("Profile updated.");
+      const { data: profilesData } = await supabase
+        .from("profiles")
+        .select("id,email,display_name,role,store_id,factory_id");
 
-    setAdminMessage("Profile updated.");
-    const { data: profilesData } = await supabase
-      .from("profiles")
-      .select("id,email,display_name,role,store_id,factory_id");
-
-    if (profilesData) {
-      setAllProfiles(profilesData as Profile[]);
+      if (profilesData) {
+        setAllProfiles(profilesData as Profile[]);
+      }
+    } catch (err) {
+      setAdminMessage(
+        `Couldn't update profile: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
+      );
+    } finally {
+      setAdminLoading(false);
     }
   };
 
   const signOut = async () => {
     setLoading(true);
-    await supabase.auth.signOut();
-    setLoading(false);
-    setProfile(null);
+    try {
+      await supabase.auth.signOut();
+      setProfile(null);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("Couldn't sign out:", err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

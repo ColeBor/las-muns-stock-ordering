@@ -60,17 +60,22 @@ export default function StorePicker() {
   const handleChange = async (newStoreId: string) => {
     if (!profile?.id || newStoreId === profile.store_id) return;
     setSwitching(true);
-    const { error } = await supabase
-      .from("profiles")
-      .update({ store_id: newStoreId })
-      .eq("id", profile.id);
-    if (error) {
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .update({ store_id: newStoreId })
+        .eq("id", profile.id);
+      if (error) {
+        alert(`Couldn't switch store: ${error.message}`);
+        return;
+      }
+      // Reload so every component re-reads the new active store via useAuthGate.
+      window.location.reload();
+    } catch (err) {
+      alert(`Couldn't switch store: ${err instanceof Error ? err.message : "network timeout"}. Try again.`);
+    } finally {
       setSwitching(false);
-      alert(`Couldn't switch store: ${error.message}`);
-      return;
     }
-    // Reload so every component re-reads the new active store via useAuthGate.
-    window.location.reload();
   };
 
   return (

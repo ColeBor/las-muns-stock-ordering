@@ -92,25 +92,31 @@ export default function AdminStores({
       daily_waste_cap: parsedCap,
     };
 
-    const { error } = editingStore
-      ? await supabase.from("stores").update(payload).eq("id", editingStore.id)
-      : await supabase.from("stores").insert([payload]);
+    try {
+      const { error } = editingStore
+        ? await supabase.from("stores").update(payload).eq("id", editingStore.id)
+        : await supabase.from("stores").insert([payload]);
 
-    setLoading(false);
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
 
-    if (error) {
-      setMessage(error.message);
-      return;
+      setMessage(editingStore ? "Store updated." : "Store created.");
+      setShowForm(false);
+      setEditingStore(null);
+      setName("");
+      setTier(3);
+      setLocation("");
+      setWasteCap("");
+      await reloadStores();
+    } catch (err) {
+      setMessage(
+        `Couldn't save store: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
+      );
+    } finally {
+      setLoading(false);
     }
-
-    setMessage(editingStore ? "Store updated." : "Store created.");
-    setShowForm(false);
-    setEditingStore(null);
-    setName("");
-    setTier(3);
-    setLocation("");
-    setWasteCap("");
-    await reloadStores();
   };
 
   const handleEdit = (store: Store) => {
@@ -124,14 +130,20 @@ export default function AdminStores({
 
   const handleDelete = async (store: Store) => {
     if (!confirm(`Delete store "${store.name}"? This cannot be undone.`)) return;
-    const { error } = await supabase.from("stores").delete().eq("id", store.id);
-    if (error) {
-      setMessage(error.message);
-      return;
+    try {
+      const { error } = await supabase.from("stores").delete().eq("id", store.id);
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      setMessage("Store deleted.");
+      if (selectedStoreId === store.id) setSelectedStoreId(null);
+      setStores(stores.filter((s) => s.id !== store.id));
+    } catch (err) {
+      setMessage(
+        `Couldn't delete store: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
+      );
     }
-    setMessage("Store deleted.");
-    if (selectedStoreId === store.id) setSelectedStoreId(null);
-    setStores(stores.filter((s) => s.id !== store.id));
   };
 
   const openManagePanel = (store: Store) => {
@@ -453,41 +465,55 @@ function StoreItemsTab({ storeId }: { storeId: string }) {
     setMessage(null);
     const now = new Date().toISOString();
 
-    if (currentActive) {
-      await supabase
-        .from("store_items")
-        .update({ is_active: false, deactivated_at: now })
-        .eq("store_id", storeId)
-        .eq("item_id", itemId);
-    } else {
-      await supabase.from("store_items").upsert({
-        store_id: storeId,
-        item_id: itemId,
-        is_active: true,
-        capacity: 0,
-        activated_at: now,
-      });
-    }
+    try {
+      if (currentActive) {
+        await supabase
+          .from("store_items")
+          .update({ is_active: false, deactivated_at: now })
+          .eq("store_id", storeId)
+          .eq("item_id", itemId);
+      } else {
+        await supabase.from("store_items").upsert({
+          store_id: storeId,
+          item_id: itemId,
+          is_active: true,
+          capacity: 0,
+          activated_at: now,
+        });
+      }
 
-    await reload();
-    setLoading(false);
-    setMessage(currentActive ? "Item deactivated." : "Item activated.");
+      await reload();
+      setMessage(currentActive ? "Item deactivated." : "Item activated.");
+    } catch (err) {
+      setMessage(
+        `Couldn't ${currentActive ? "deactivate" : "activate"} item: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
   const setCapacity = async (itemId: string, capacity: number) => {
     setLoading(true);
     setMessage(null);
     const now = new Date().toISOString();
-    const { error } = await supabase.from("store_items").upsert({
-      store_id: storeId,
-      item_id: itemId,
-      is_active: true,
-      capacity,
-      activated_at: now,
-    });
-    await reload();
-    setLoading(false);
-    setMessage(error ? error.message : "Capacity updated.");
+    try {
+      const { error } = await supabase.from("store_items").upsert({
+        store_id: storeId,
+        item_id: itemId,
+        is_active: true,
+        capacity,
+        activated_at: now,
+      });
+      await reload();
+      setMessage(error ? error.message : "Capacity updated.");
+    } catch (err) {
+      setMessage(
+        `Couldn't update capacity: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
   const activateAll = async () => {
@@ -501,10 +527,17 @@ function StoreItemsTab({ storeId }: { storeId: string }) {
       capacity: 0,
       activated_at: now,
     }));
-    await supabase.from("store_items").upsert(payload);
-    await reload();
-    setLoading(false);
-    setMessage("All items activated.");
+    try {
+      await supabase.from("store_items").upsert(payload);
+      await reload();
+      setMessage("All items activated.");
+    } catch (err) {
+      setMessage(
+        `Couldn't activate all items: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
   const columnDefs: ColDef<StoreItemRow>[] = [

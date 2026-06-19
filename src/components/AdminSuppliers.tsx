@@ -74,31 +74,37 @@ export default function AdminSuppliers({
       contact_info: contactInfo.trim() || null,
     };
 
-    let error;
-    if (editingSupplier) {
-      ({ error } = await supabase
-        .from("suppliers")
-        .update(payload)
-        .eq("id", editingSupplier.id));
-    } else {
-      ({ error } = await supabase
-        .from("suppliers")
-        .insert([payload]));
+    try {
+      let error;
+      if (editingSupplier) {
+        ({ error } = await supabase
+          .from("suppliers")
+          .update(payload)
+          .eq("id", editingSupplier.id));
+      } else {
+        ({ error } = await supabase
+          .from("suppliers")
+          .insert([payload]));
+      }
+
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+
+      setMessage(editingSupplier ? "Supplier updated successfully." : "Supplier created successfully.");
+      setShowForm(false);
+      setEditingSupplier(null);
+      setName("");
+      setContactInfo("");
+      await loadSuppliers();
+    } catch (err) {
+      setMessage(
+        `Couldn't save supplier: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
+      );
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
-    setMessage(editingSupplier ? "Supplier updated successfully." : "Supplier created successfully.");
-    setShowForm(false);
-    setEditingSupplier(null);
-    setName("");
-    setContactInfo("");
-    await loadSuppliers();
   };
 
   const handleEdit = (supplier: Supplier) => {
@@ -111,18 +117,24 @@ export default function AdminSuppliers({
   const handleDelete = async (supplier: Supplier) => {
     if (!confirm(`Delete supplier "${supplier.name}"? This action cannot be undone.`)) return;
 
-    const { error } = await supabase
-      .from("suppliers")
-      .delete()
-      .eq("id", supplier.id);
+    try {
+      const { error } = await supabase
+        .from("suppliers")
+        .delete()
+        .eq("id", supplier.id);
 
-    if (error) {
-      setMessage(error.message);
-      return;
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+
+      setMessage("Supplier deleted successfully.");
+      setSuppliers(suppliers.filter((s) => s.id !== supplier.id));
+    } catch (err) {
+      setMessage(
+        `Couldn't delete supplier: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
+      );
     }
-
-    setMessage("Supplier deleted successfully.");
-    setSuppliers(suppliers.filter((s) => s.id !== supplier.id));
   };
 
   const columnDefs: ColDef<Supplier>[] = [

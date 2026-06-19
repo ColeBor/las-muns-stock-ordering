@@ -144,28 +144,33 @@ export default function AdminBakeExpected() {
     }
     setSavingKey(key);
     setMessage(null);
-    const { error } = await supabase.from("bake_expected_sales").upsert(
-      [
-        {
-          store_id: selectedStoreId,
-          item_id,
-          day_of_week,
-          expected_qty: parsed,
-        },
-      ],
-      { onConflict: "store_id,item_id,day_of_week" },
-    );
-    setSavingKey(null);
-    if (error) {
-      setMessage(error.message);
-      return;
+    try {
+      const { error } = await supabase.from("bake_expected_sales").upsert(
+        [
+          {
+            store_id: selectedStoreId,
+            item_id,
+            day_of_week,
+            expected_qty: parsed,
+          },
+        ],
+        { onConflict: "store_id,item_id,day_of_week" },
+      );
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      setDrafts((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      loadRows();
+    } catch (err) {
+      setMessage(`Couldn't save expected qty: ${err instanceof Error ? err.message : "network timeout"}. Try again.`);
+    } finally {
+      setSavingKey(null);
     }
-    setDrafts((prev) => {
-      const next = { ...prev };
-      delete next[key];
-      return next;
-    });
-    loadRows();
   };
 
   return (

@@ -71,27 +71,36 @@ export default function AdminWasteAlerts() {
     }
     setLoading(true);
     setMessage(null);
-    const { data, error } = await supabase
-      .from("waste_cap_alerts")
-      .select(
-        "store_id,store_name,wasted_on,counted_qty,store_cap,default_cap,effective_cap,last_entry_at,resolved_at,resolved_by,resolved_note,is_active_alert",
-      )
-      .order("wasted_on", { ascending: false })
-      .order("store_name", { ascending: true });
-    setLoading(false);
-    if (error) {
-      setMessage(error.message);
-      return;
+    try {
+      const { data, error } = await supabase
+        .from("waste_cap_alerts")
+        .select(
+          "store_id,store_name,wasted_on,counted_qty,store_cap,default_cap,effective_cap,last_entry_at,resolved_at,resolved_by,resolved_note,is_active_alert",
+        )
+        .order("wasted_on", { ascending: false })
+        .order("store_name", { ascending: true });
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      setRows(
+        ((data as WasteCapAlertRow[]) ?? []).map((r) => ({
+          ...r,
+          counted_qty: Number(r.counted_qty),
+          store_cap: r.store_cap == null ? null : Number(r.store_cap),
+          default_cap: r.default_cap == null ? null : Number(r.default_cap),
+          effective_cap: r.effective_cap == null ? null : Number(r.effective_cap),
+        })),
+      );
+    } catch (err) {
+      setMessage(
+        `Couldn't load alerts: ${
+          err instanceof Error ? err.message : "network timeout"
+        }. Try again.`,
+      );
+    } finally {
+      setLoading(false);
     }
-    setRows(
-      ((data as WasteCapAlertRow[]) ?? []).map((r) => ({
-        ...r,
-        counted_qty: Number(r.counted_qty),
-        store_cap: r.store_cap == null ? null : Number(r.store_cap),
-        default_cap: r.default_cap == null ? null : Number(r.default_cap),
-        effective_cap: r.effective_cap == null ? null : Number(r.effective_cap),
-      })),
-    );
   }, [isStoreManager]);
 
   useEffect(() => {

@@ -203,19 +203,25 @@ export default function TrainingResources() {
       setMessage("This resource is missing a file.");
       return;
     }
-    const { data, error } = await supabase.storage
-      .from(STORAGE_BUCKET)
-      .createSignedUrl(resource.storage_path, SIGNED_URL_TTL_SECONDS);
-    if (error || !data?.signedUrl) {
-      const raw = error?.message ?? "";
-      const friendly =
-        /not found/i.test(raw)
-          ? "This file is no longer available. Ask a Store Manager to re-upload it."
-          : raw || "Couldn't open this file. Try again or ask a Store Manager.";
-      setMessage(friendly);
-      return;
+    try {
+      const { data, error } = await supabase.storage
+        .from(STORAGE_BUCKET)
+        .createSignedUrl(resource.storage_path, SIGNED_URL_TTL_SECONDS);
+      if (error || !data?.signedUrl) {
+        const raw = error?.message ?? "";
+        const friendly =
+          /not found/i.test(raw)
+            ? "This file is no longer available. Ask a Store Manager to re-upload it."
+            : raw || "Couldn't open this file. Try again or ask a Store Manager.";
+        setMessage(friendly);
+        return;
+      }
+      setSignedUrls((prev) => ({ ...prev, [resource.id]: data.signedUrl }));
+    } catch (err) {
+      setMessage(
+        `Couldn't open this file: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
+      );
     }
-    setSignedUrls((prev) => ({ ...prev, [resource.id]: data.signedUrl }));
   };
 
   const formatDateTime = (iso: string) => new Date(iso).toLocaleString();

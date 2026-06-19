@@ -53,37 +53,44 @@ export default function OtterScheduledOrders() {
     }
     setLoading(true);
     setMessage(null);
-    const cutoff = new Date(Date.now() - GRACE_MS).toISOString();
-    let query = supabase
-      .from("otter_orders")
-      .select(
-        "id,otter_order_id,store_id,display_id,customer_name,fulfillment_mode,status,scheduled_for,canceled_at,item_count,stores(name)",
-      )
-      .eq("is_scheduled", true)
-      .is("canceled_at", null)
-      .gte("scheduled_for", cutoff)
-      .order("scheduled_for", { ascending: true });
-    if (isEmployee && employeeStoreId) query = query.eq("store_id", employeeStoreId);
-    const { data, error } = await query;
-    setLoading(false);
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-    const rows = (data as OrderRow[]) ?? [];
-    setOrders(rows);
+    try {
+      const cutoff = new Date(Date.now() - GRACE_MS).toISOString();
+      let query = supabase
+        .from("otter_orders")
+        .select(
+          "id,otter_order_id,store_id,display_id,customer_name,fulfillment_mode,status,scheduled_for,canceled_at,item_count,stores(name)",
+        )
+        .eq("is_scheduled", true)
+        .is("canceled_at", null)
+        .gte("scheduled_for", cutoff)
+        .order("scheduled_for", { ascending: true });
+      if (isEmployee && employeeStoreId) query = query.eq("store_id", employeeStoreId);
+      const { data, error } = await query;
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      const rows = (data as OrderRow[]) ?? [];
+      setOrders(rows);
 
-    // Pull line items for the visible orders in one shot.
-    const ids = rows.map((r) => r.otter_order_id);
-    if (ids.length === 0) {
-      setItems([]);
-      return;
+      // Pull line items for the visible orders in one shot.
+      const ids = rows.map((r) => r.otter_order_id);
+      if (ids.length === 0) {
+        setItems([]);
+        return;
+      }
+      const { data: itemData } = await supabase
+        .from("otter_order_items")
+        .select("otter_order_id,name,quantity")
+        .in("otter_order_id", ids);
+      setItems((itemData as OrderItemRow[]) ?? []);
+    } catch (err) {
+      setMessage(
+        `Couldn't load orders: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
+      );
+    } finally {
+      setLoading(false);
     }
-    const { data: itemData } = await supabase
-      .from("otter_order_items")
-      .select("otter_order_id,name,quantity")
-      .in("otter_order_id", ids);
-    setItems((itemData as OrderItemRow[]) ?? []);
   }, [canView, isEmployee, employeeStoreId]);
 
   useEffect(() => {
@@ -280,31 +287,44 @@ function OtterStoreMapping() {
     }
     setSaving(true);
     setMessage(null);
-    const { error } = await supabase
-      .from("otter_store_links")
-      .upsert(
-        { otter_store_id: trimmed, store_id: storeId, label: label.trim() || null },
-        { onConflict: "otter_store_id" },
+    try {
+      const { error } = await supabase
+        .from("otter_store_links")
+        .upsert(
+          { otter_store_id: trimmed, store_id: storeId, label: label.trim() || null },
+          { onConflict: "otter_store_id" },
+        );
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      setOtterId("");
+      setStoreId("");
+      setLabel("");
+      setMessage("Mapping saved.");
+      reload();
+    } catch (err) {
+      setMessage(
+        `Couldn't save mapping: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
       );
-    setSaving(false);
-    if (error) {
-      setMessage(error.message);
-      return;
+    } finally {
+      setSaving(false);
     }
-    setOtterId("");
-    setStoreId("");
-    setLabel("");
-    setMessage("Mapping saved.");
-    reload();
   };
 
   const handleDelete = async (id: string) => {
-    const { error } = await supabase.from("otter_store_links").delete().eq("otter_store_id", id);
-    if (error) {
-      setMessage(error.message);
-      return;
+    try {
+      const { error } = await supabase.from("otter_store_links").delete().eq("otter_store_id", id);
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      reload();
+    } catch (err) {
+      setMessage(
+        `Couldn't remove mapping: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
+      );
     }
-    reload();
   };
 
   return (

@@ -210,41 +210,48 @@ export default function AdminWasteAnalytics() {
     }
     setLoading(true);
     setMessage(null);
-    let entriesQuery = supabase
-      .from("waste_log_entries")
-      .select("id,store_id,item_id,quantity,reason,reason_other,wasted_on,recorded_by")
-      .gte("wasted_on", fetchRange.start)
-      .lte("wasted_on", fetchRange.end);
-    if (storeFilter) entriesQuery = entriesQuery.eq("store_id", storeFilter);
-    const [entriesRes, itemsRes] = await Promise.all([
-      entriesQuery,
-      supabase.from("items").select("id,name,cost_per_unit,retail_price_per_unit"),
-    ]);
-    setLoading(false);
-    if (entriesRes.error) {
-      setMessage(`Couldn't load waste entries: ${entriesRes.error.message}`);
-      setEntries([]);
-      return;
+    try {
+      let entriesQuery = supabase
+        .from("waste_log_entries")
+        .select("id,store_id,item_id,quantity,reason,reason_other,wasted_on,recorded_by")
+        .gte("wasted_on", fetchRange.start)
+        .lte("wasted_on", fetchRange.end);
+      if (storeFilter) entriesQuery = entriesQuery.eq("store_id", storeFilter);
+      const [entriesRes, itemsRes] = await Promise.all([
+        entriesQuery,
+        supabase.from("items").select("id,name,cost_per_unit,retail_price_per_unit"),
+      ]);
+      if (entriesRes.error) {
+        setMessage(`Couldn't load waste entries: ${entriesRes.error.message}`);
+        setEntries([]);
+        return;
+      }
+      if (itemsRes.error) {
+        setMessage(`Couldn't load items: ${itemsRes.error.message}`);
+        setItems([]);
+        return;
+      }
+      setEntries(
+        ((entriesRes.data as WasteEntry[]) ?? []).map((e) => ({
+          ...e,
+          quantity: Number(e.quantity),
+        })),
+      );
+      setItems(
+        ((itemsRes.data as Item[]) ?? []).map((i) => ({
+          ...i,
+          cost_per_unit: i.cost_per_unit === null ? null : Number(i.cost_per_unit),
+          retail_price_per_unit:
+            i.retail_price_per_unit === null ? null : Number(i.retail_price_per_unit),
+        })),
+      );
+    } catch (err) {
+      setMessage(
+        `Couldn't load waste analytics: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
+      );
+    } finally {
+      setLoading(false);
     }
-    if (itemsRes.error) {
-      setMessage(`Couldn't load items: ${itemsRes.error.message}`);
-      setItems([]);
-      return;
-    }
-    setEntries(
-      ((entriesRes.data as WasteEntry[]) ?? []).map((e) => ({
-        ...e,
-        quantity: Number(e.quantity),
-      })),
-    );
-    setItems(
-      ((itemsRes.data as Item[]) ?? []).map((i) => ({
-        ...i,
-        cost_per_unit: i.cost_per_unit === null ? null : Number(i.cost_per_unit),
-        retail_price_per_unit:
-          i.retail_price_per_unit === null ? null : Number(i.retail_price_per_unit),
-      })),
-    );
   }, [isStoreManager, fetchRange.start, fetchRange.end, storeFilter]);
 
   useEffect(() => {

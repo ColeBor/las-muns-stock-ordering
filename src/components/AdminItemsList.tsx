@@ -143,21 +143,29 @@ export default function AdminItemsList({
       retail_price_per_unit: retail,
     };
 
-    const { error } = editingItem
-      ? await supabase.from("items").update(payload).eq("id", editingItem.id)
-      : await supabase.from("items").insert([payload]);
+    try {
+      const { error } = editingItem
+        ? await supabase.from("items").update(payload).eq("id", editingItem.id)
+        : await supabase.from("items").insert([payload]);
 
-    setLoading(false);
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
 
-    if (error) {
-      setMessage(error.message);
-      return;
+      setMessage(editingItem ? "Item updated." : "Item created.");
+      setShowForm(false);
+      resetForm();
+      await reload();
+    } catch (err) {
+      setMessage(
+        `Couldn't save item: ${
+          err instanceof Error ? err.message : "network timeout"
+        }. Try again.`,
+      );
+    } finally {
+      setLoading(false);
     }
-
-    setMessage(editingItem ? "Item updated." : "Item created.");
-    setShowForm(false);
-    resetForm();
-    await reload();
   };
 
   const handleEdit = (item: Item) => {
@@ -281,46 +289,54 @@ export default function AdminItemsList({
     const now = new Date().toISOString();
     const errors: string[] = [];
 
-    if (toActivate.length > 0) {
-      const { error } = await supabase.from("store_items").upsert(
-        toActivate.map((r) => ({
-          store_id: r.store_id,
-          item_id: activateAtItem.id,
-          is_active: true,
-          capacity: 0,
-          activated_at: now,
-        })),
-        { onConflict: "store_id,item_id" },
+    try {
+      if (toActivate.length > 0) {
+        const { error } = await supabase.from("store_items").upsert(
+          toActivate.map((r) => ({
+            store_id: r.store_id,
+            item_id: activateAtItem.id,
+            is_active: true,
+            capacity: 0,
+            activated_at: now,
+          })),
+          { onConflict: "store_id,item_id" },
+        );
+        if (error) errors.push(error.message);
+      }
+
+      if (toDeactivate.length > 0) {
+        const { error } = await supabase
+          .from("store_items")
+          .update({ is_active: false, deactivated_at: now })
+          .in(
+            "store_id",
+            toDeactivate.map((r) => r.store_id),
+          )
+          .eq("item_id", activateAtItem.id);
+        if (error) errors.push(error.message);
+      }
+
+      if (errors.length > 0) {
+        setMessage(`Errors: ${errors.join("; ")}`);
+        return;
+      }
+
+      const parts: string[] = [];
+      if (toActivate.length > 0) parts.push(`activated at ${toActivate.length}`);
+      if (toDeactivate.length > 0) parts.push(`deactivated at ${toDeactivate.length}`);
+      setMessage(`"${activateAtItem.name}" ${parts.join(", ")} store${
+        toActivate.length + toDeactivate.length === 1 ? "" : "s"
+      }.`);
+      closeActivateAt();
+    } catch (err) {
+      setMessage(
+        `Couldn't save: ${
+          err instanceof Error ? err.message : "network timeout"
+        }. Try again.`,
       );
-      if (error) errors.push(error.message);
+    } finally {
+      setActivateSaving(false);
     }
-
-    if (toDeactivate.length > 0) {
-      const { error } = await supabase
-        .from("store_items")
-        .update({ is_active: false, deactivated_at: now })
-        .in(
-          "store_id",
-          toDeactivate.map((r) => r.store_id),
-        )
-        .eq("item_id", activateAtItem.id);
-      if (error) errors.push(error.message);
-    }
-
-    setActivateSaving(false);
-
-    if (errors.length > 0) {
-      setMessage(`Errors: ${errors.join("; ")}`);
-      return;
-    }
-
-    const parts: string[] = [];
-    if (toActivate.length > 0) parts.push(`activated at ${toActivate.length}`);
-    if (toDeactivate.length > 0) parts.push(`deactivated at ${toDeactivate.length}`);
-    setMessage(`"${activateAtItem.name}" ${parts.join(", ")} store${
-      toActivate.length + toDeactivate.length === 1 ? "" : "s"
-    }.`);
-    closeActivateAt();
   };
 
   // Inline edit on the grid for the three category fields.
@@ -354,20 +370,29 @@ export default function AdminItemsList({
       normalized = (params.newValue as string) || null;
     }
 
-    const { error } = await supabase
-      .from("items")
-      .update({ [field]: normalized })
-      .eq("id", params.data.id);
+    try {
+      const { error } = await supabase
+        .from("items")
+        .update({ [field]: normalized })
+        .eq("id", params.data.id);
 
-    if (error) {
-      setMessage(error.message);
+      if (error) {
+        setMessage(error.message);
+        params.node.setDataValue(field, params.oldValue);
+        return;
+      }
+      setMessage(`Updated ${field}.`);
+      setItems((prev) =>
+        prev.map((i) => (i.id === params.data.id ? { ...i, [field]: normalized } : i)),
+      );
+    } catch (err) {
+      setMessage(
+        `Couldn't update ${field}: ${
+          err instanceof Error ? err.message : "network timeout"
+        }. Try again.`,
+      );
       params.node.setDataValue(field, params.oldValue);
-      return;
     }
-    setMessage(`Updated ${field}.`);
-    setItems((prev) =>
-      prev.map((i) => (i.id === params.data.id ? { ...i, [field]: normalized } : i)),
-    );
   };
 
   const columnDefs: ColDef<Item>[] = useMemo(() => [

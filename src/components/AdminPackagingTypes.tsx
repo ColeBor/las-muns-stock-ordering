@@ -73,30 +73,36 @@ export default function AdminPackagingTypes({
     setLoading(true);
     setMessage(null);
 
-    let error;
-    if (editing) {
-      ({ error } = await supabase
-        .from("packaging_types")
-        .update({ name: trimmed })
-        .eq("id", editing.id));
-    } else {
-      ({ error } = await supabase
-        .from("packaging_types")
-        .insert([{ name: trimmed }]));
+    try {
+      let error;
+      if (editing) {
+        ({ error } = await supabase
+          .from("packaging_types")
+          .update({ name: trimmed })
+          .eq("id", editing.id));
+      } else {
+        ({ error } = await supabase
+          .from("packaging_types")
+          .insert([{ name: trimmed }]));
+      }
+
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+
+      setMessage(editing ? "Packaging type updated." : "Packaging type created.");
+      setShowForm(false);
+      setEditing(null);
+      setName("");
+      await reload();
+    } catch (err) {
+      setMessage(
+        `Couldn't save packaging type: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
+      );
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
-    setMessage(editing ? "Packaging type updated." : "Packaging type created.");
-    setShowForm(false);
-    setEditing(null);
-    setName("");
-    await reload();
   };
 
   const handleEdit = (pkg: PackagingType) => {
@@ -116,16 +122,22 @@ export default function AdminPackagingTypes({
       )
     )
       return;
-    const { error } = await supabase
-      .from("packaging_types")
-      .delete()
-      .eq("id", pkg.id);
-    if (error) {
-      setMessage(error.message);
-      return;
+    try {
+      const { error } = await supabase
+        .from("packaging_types")
+        .delete()
+        .eq("id", pkg.id);
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      setMessage("Packaging type deleted.");
+      setPackagingTypes((prev) => prev.filter((p) => p.id !== pkg.id));
+    } catch (err) {
+      setMessage(
+        `Couldn't delete packaging type: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
+      );
     }
-    setMessage("Packaging type deleted.");
-    setPackagingTypes((prev) => prev.filter((p) => p.id !== pkg.id));
   };
 
   const columnDefs: ColDef<PackagingType>[] = [

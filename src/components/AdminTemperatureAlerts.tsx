@@ -50,30 +50,37 @@ export default function AdminTemperatureAlerts() {
     }
     setLoading(true);
     setMessage(null);
-    const { data, error } = await supabase
-      .from("fridge_alerts")
-      .select(
-        "fridge_id,fridge_name,store_id,store_name,target_min_c,target_max_c,severe_deviation_c,readings_count,out_of_range_count,severe_excursion_count,latest_reading_at,alert_resolved_at,alert_resolved_by,alert_resolved_note,is_active_alert",
-      )
-      .order("store_name", { ascending: true })
-      .order("fridge_name", { ascending: true });
-    setLoading(false);
-    if (error) {
-      setMessage(error.message);
-      return;
+    try {
+      const { data, error } = await supabase
+        .from("fridge_alerts")
+        .select(
+          "fridge_id,fridge_name,store_id,store_name,target_min_c,target_max_c,severe_deviation_c,readings_count,out_of_range_count,severe_excursion_count,latest_reading_at,alert_resolved_at,alert_resolved_by,alert_resolved_note,is_active_alert",
+        )
+        .order("store_name", { ascending: true })
+        .order("fridge_name", { ascending: true });
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      setRows(
+        ((data as FridgeAlertRow[]) ?? []).map((r) => ({
+          ...r,
+          target_min_c: r.target_min_c === null ? null : Number(r.target_min_c),
+          target_max_c: r.target_max_c === null ? null : Number(r.target_max_c),
+          severe_deviation_c:
+            r.severe_deviation_c === null ? null : Number(r.severe_deviation_c),
+          readings_count: Number(r.readings_count),
+          out_of_range_count: Number(r.out_of_range_count),
+          severe_excursion_count: Number(r.severe_excursion_count),
+        })),
+      );
+    } catch (err) {
+      setMessage(
+        `Couldn't load alerts: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
+      );
+    } finally {
+      setLoading(false);
     }
-    setRows(
-      ((data as FridgeAlertRow[]) ?? []).map((r) => ({
-        ...r,
-        target_min_c: r.target_min_c === null ? null : Number(r.target_min_c),
-        target_max_c: r.target_max_c === null ? null : Number(r.target_max_c),
-        severe_deviation_c:
-          r.severe_deviation_c === null ? null : Number(r.severe_deviation_c),
-        readings_count: Number(r.readings_count),
-        out_of_range_count: Number(r.out_of_range_count),
-        severe_excursion_count: Number(r.severe_excursion_count),
-      })),
-    );
   }, [isStoreManager]);
 
   useEffect(() => {
@@ -112,39 +119,52 @@ export default function AdminTemperatureAlerts() {
   const handleResolve = async (fridgeId: string) => {
     setSavingResolution(true);
     setMessage(null);
-    const { error } = await supabase
-      .from("store_fridges")
-      .update({
-        alert_resolved_at: new Date().toISOString(),
-        alert_resolved_by: session?.user?.email ?? session?.user?.id ?? null,
-        alert_resolved_note: resolveNote.trim() || null,
-      })
-      .eq("id", fridgeId);
-    setSavingResolution(false);
-    if (error) {
-      setMessage(error.message);
-      return;
+    try {
+      const { error } = await supabase
+        .from("store_fridges")
+        .update({
+          alert_resolved_at: new Date().toISOString(),
+          alert_resolved_by: session?.user?.email ?? session?.user?.id ?? null,
+          alert_resolved_note: resolveNote.trim() || null,
+        })
+        .eq("id", fridgeId);
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      setResolvingId(null);
+      setResolveNote("");
+      loadAlerts();
+    } catch (err) {
+      setMessage(
+        `Couldn't resolve alert: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
+      );
+    } finally {
+      setSavingResolution(false);
     }
-    setResolvingId(null);
-    setResolveNote("");
-    loadAlerts();
   };
 
   const handleUnresolve = async (fridgeId: string) => {
     setMessage(null);
-    const { error } = await supabase
-      .from("store_fridges")
-      .update({
-        alert_resolved_at: null,
-        alert_resolved_by: null,
-        alert_resolved_note: null,
-      })
-      .eq("id", fridgeId);
-    if (error) {
-      setMessage(error.message);
-      return;
+    try {
+      const { error } = await supabase
+        .from("store_fridges")
+        .update({
+          alert_resolved_at: null,
+          alert_resolved_by: null,
+          alert_resolved_note: null,
+        })
+        .eq("id", fridgeId);
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      loadAlerts();
+    } catch (err) {
+      setMessage(
+        `Couldn't unresolve alert: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
+      );
     }
-    loadAlerts();
   };
 
   const openResolveForm = (fridgeId: string) => {

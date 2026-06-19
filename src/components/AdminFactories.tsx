@@ -74,39 +74,45 @@ export default function AdminFactories({
       location: location.trim() || null,
     };
 
-    let error;
-    if (editingFactory) {
-      ({ error } = await supabase
+    try {
+      let error;
+      if (editingFactory) {
+        ({ error } = await supabase
+          .from("factories")
+          .update(payload)
+          .eq("id", editingFactory.id));
+      } else {
+        ({ error } = await supabase
+          .from("factories")
+          .insert([payload]));
+      }
+
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+
+      setMessage(editingFactory ? "Factory updated successfully." : "Factory created successfully.");
+      setShowForm(false);
+      setEditingFactory(null);
+      setName("");
+      setLocation("");
+
+      // Reload factories
+      const { data } = await supabase
         .from("factories")
-        .update(payload)
-        .eq("id", editingFactory.id));
-    } else {
-      ({ error } = await supabase
-        .from("factories")
-        .insert([payload]));
-    }
+        .select("*")
+        .order("created_at", { ascending: false });
 
-    setLoading(false);
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
-    setMessage(editingFactory ? "Factory updated successfully." : "Factory created successfully.");
-    setShowForm(false);
-    setEditingFactory(null);
-    setName("");
-    setLocation("");
-
-    // Reload factories
-    const { data } = await supabase
-      .from("factories")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (data) {
-      setFactories(data as Factory[]);
+      if (data) {
+        setFactories(data as Factory[]);
+      }
+    } catch (err) {
+      setMessage(
+        `Couldn't save factory: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
+      );
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -120,18 +126,24 @@ export default function AdminFactories({
   const handleDelete = async (factory: Factory) => {
     if (!confirm(`Delete factory "${factory.name}"? This action cannot be undone.`)) return;
 
-    const { error } = await supabase
-      .from("factories")
-      .delete()
-      .eq("id", factory.id);
+    try {
+      const { error } = await supabase
+        .from("factories")
+        .delete()
+        .eq("id", factory.id);
 
-    if (error) {
-      setMessage(error.message);
-      return;
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+
+      setMessage("Factory deleted successfully.");
+      setFactories(factories.filter((f) => f.id !== factory.id));
+    } catch (err) {
+      setMessage(
+        `Couldn't delete factory: ${err instanceof Error ? err.message : "network timeout"}. Try again.`,
+      );
     }
-
-    setMessage("Factory deleted successfully.");
-    setFactories(factories.filter((f) => f.id !== factory.id));
   };
 
   const columnDefs: ColDef<Factory>[] = [

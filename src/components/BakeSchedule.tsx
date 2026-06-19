@@ -290,76 +290,78 @@ export default function BakeSchedule() {
     setSaving(true);
     setMessage(null);
 
-    // Upsert the sheet for this store (one per store). Replace its lines.
-    const sheetPayload = {
-      store_id: effectiveStoreId,
-      bake_for_date: bakeForDate,
-      created_by: session?.user?.email ?? session?.user?.id ?? null,
-    };
-    const { data: sheetData, error: sheetErr } = await supabase
-      .from("bake_sheets")
-      .upsert([sheetPayload], { onConflict: "store_id" })
-      .select("id,store_id,bake_for_date,created_by,updated_at")
-      .single();
-    if (sheetErr || !sheetData) {
-      setSaving(false);
-      setMessage(sheetErr?.message ?? "Couldn't save sheet header.");
-      return;
-    }
-    const sheetId = (sheetData as Sheet).id;
-
-    // Fetch existing lines so we can carry baked_qty across the update.
-    // Baked progress is about what's actually been baked today and is
-    // independent of plan tweaks — changing bake_qty just adjusts the
-    // denominator (e.g. 12/24 becomes 12/36 when bake_qty is bumped). Only
-    // Start Fresh resets baked progress. First-save case returns empty,
-    // so new items start at baked_qty = 0 naturally.
-    const { data: existingLines, error: fetchErr } = await supabase
-      .from("bake_sheet_lines")
-      .select("item_id,on_hand_qty,bake_qty,baked_qty")
-      .eq("bake_sheet_id", sheetId);
-    if (fetchErr) {
-      setSaving(false);
-      setMessage(fetchErr.message);
-      return;
-    }
-    const existingByItem = new Map<string, SheetLine>();
-    for (const row of (existingLines as SheetLine[]) ?? []) {
-      existingByItem.set(row.item_id, row);
-    }
-
-    // Replace lines: delete-then-insert handles both new items and removed
-    // items cleanly. baked_qty always carries over from `existingByItem`
-    // when it exists.
-    const { error: delErr } = await supabase
-      .from("bake_sheet_lines")
-      .delete()
-      .eq("bake_sheet_id", sheetId);
-    if (delErr) {
-      setSaving(false);
-      setMessage(delErr.message);
-      return;
-    }
-    const linePayload = items.map((item) => {
-      const newOnHand = Number(onHand[item.item_id] ?? "0");
-      const newBakeQty = Number(bakeQty[item.item_id] ?? "0");
-      const prev = existingByItem.get(item.item_id);
-      return {
-        bake_sheet_id: sheetId,
-        item_id: item.item_id,
-        on_hand_qty: newOnHand,
-        bake_qty: newBakeQty,
-        baked_qty: prev?.baked_qty ?? 0,
+    try {
+      // Upsert the sheet for this store (one per store). Replace its lines.
+      const sheetPayload = {
+        store_id: effectiveStoreId,
+        bake_for_date: bakeForDate,
+        created_by: session?.user?.email ?? session?.user?.id ?? null,
       };
-    });
-    const { error: insErr } = await supabase.from("bake_sheet_lines").insert(linePayload);
-    setSaving(false);
-    if (insErr) {
-      setMessage(insErr.message);
-      return;
+      const { data: sheetData, error: sheetErr } = await supabase
+        .from("bake_sheets")
+        .upsert([sheetPayload], { onConflict: "store_id" })
+        .select("id,store_id,bake_for_date,created_by,updated_at")
+        .single();
+      if (sheetErr || !sheetData) {
+        setMessage(sheetErr?.message ?? "Couldn't save sheet header.");
+        return;
+      }
+      const sheetId = (sheetData as Sheet).id;
+
+      // Fetch existing lines so we can carry baked_qty across the update.
+      // Baked progress is about what's actually been baked today and is
+      // independent of plan tweaks — changing bake_qty just adjusts the
+      // denominator (e.g. 12/24 becomes 12/36 when bake_qty is bumped). Only
+      // Start Fresh resets baked progress. First-save case returns empty,
+      // so new items start at baked_qty = 0 naturally.
+      const { data: existingLines, error: fetchErr } = await supabase
+        .from("bake_sheet_lines")
+        .select("item_id,on_hand_qty,bake_qty,baked_qty")
+        .eq("bake_sheet_id", sheetId);
+      if (fetchErr) {
+        setMessage(fetchErr.message);
+        return;
+      }
+      const existingByItem = new Map<string, SheetLine>();
+      for (const row of (existingLines as SheetLine[]) ?? []) {
+        existingByItem.set(row.item_id, row);
+      }
+
+      // Replace lines: delete-then-insert handles both new items and removed
+      // items cleanly. baked_qty always carries over from `existingByItem`
+      // when it exists.
+      const { error: delErr } = await supabase
+        .from("bake_sheet_lines")
+        .delete()
+        .eq("bake_sheet_id", sheetId);
+      if (delErr) {
+        setMessage(delErr.message);
+        return;
+      }
+      const linePayload = items.map((item) => {
+        const newOnHand = Number(onHand[item.item_id] ?? "0");
+        const newBakeQty = Number(bakeQty[item.item_id] ?? "0");
+        const prev = existingByItem.get(item.item_id);
+        return {
+          bake_sheet_id: sheetId,
+          item_id: item.item_id,
+          on_hand_qty: newOnHand,
+          bake_qty: newBakeQty,
+          baked_qty: prev?.baked_qty ?? 0,
+        };
+      });
+      const { error: insErr } = await supabase.from("bake_sheet_lines").insert(linePayload);
+      if (insErr) {
+        setMessage(insErr.message);
+        return;
+      }
+      setMessage("Sheet saved.");
+      loadSheet();
+    } catch (err) {
+      setMessage(`Couldn't save sheet: ${err instanceof Error ? err.message : "network timeout"}. Try again.`);
+    } finally {
+      setSaving(false);
     }
-    setMessage("Sheet saved.");
-    loadSheet();
   };
 
   // Update baked_qty for a single line. Each baker action persists
@@ -399,19 +401,25 @@ export default function BakeSchedule() {
     // Optimistic local update; rollback on error.
     const previous = bakedQty[itemId] ?? "0";
     setBakedQty((prev) => ({ ...prev, [itemId]: String(newValue) }));
-    const { error } = await supabase
-      .from("bake_sheet_lines")
-      .update({
-        baked_qty: newValue,
-        on_hand_qty: pendingOnHand,
-        bake_qty: pendingBakeQty,
-      })
-      .eq("bake_sheet_id", sheet.id)
-      .eq("item_id", itemId);
-    setBakedSavingItemId(null);
-    if (error) {
+    try {
+      const { error } = await supabase
+        .from("bake_sheet_lines")
+        .update({
+          baked_qty: newValue,
+          on_hand_qty: pendingOnHand,
+          bake_qty: pendingBakeQty,
+        })
+        .eq("bake_sheet_id", sheet.id)
+        .eq("item_id", itemId);
+      if (error) {
+        setBakedQty((prev) => ({ ...prev, [itemId]: previous }));
+        setMessage(error.message);
+      }
+    } catch (err) {
       setBakedQty((prev) => ({ ...prev, [itemId]: previous }));
-      setMessage(error.message);
+      setMessage(`Couldn't save baked qty: ${err instanceof Error ? err.message : "network timeout"}. Try again.`);
+    } finally {
+      setBakedSavingItemId(null);
     }
   };
 
@@ -444,21 +452,25 @@ export default function BakeSchedule() {
     if (!effectiveStoreId) return;
     setConfirmStartFresh(false);
     setMessage(null);
-    // Delete the existing sheet (cascade drops the lines). Resets the form.
-    const { error } = await supabase
-      .from("bake_sheets")
-      .delete()
-      .eq("store_id", effectiveStoreId);
-    if (error) {
-      setMessage(error.message);
-      return;
+    try {
+      // Delete the existing sheet (cascade drops the lines). Resets the form.
+      const { error } = await supabase
+        .from("bake_sheets")
+        .delete()
+        .eq("store_id", effectiveStoreId);
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      setSheet(null);
+      setOnHand({});
+      setBakeQty({});
+      setBakedQty({});
+      setBakeForDate(tomorrowIso());
+      setMessage("Started fresh.");
+    } catch (err) {
+      setMessage(`Couldn't start fresh: ${err instanceof Error ? err.message : "network timeout"}. Try again.`);
     }
-    setSheet(null);
-    setOnHand({});
-    setBakeQty({});
-    setBakedQty({});
-    setBakeForDate(tomorrowIso());
-    setMessage("Started fresh.");
   };
 
   const handleSignOut = async () => {

@@ -159,98 +159,101 @@ export default function AdminCycles() {
     setLoading(true);
     setMessage(null);
 
-    // Status is machine-driven (draft → allocated → delivered) so we never
-    // include it in the upsert. Inserts let the DB default to 'draft';
-    // updates leave whatever the run/finalize endpoints set.
-    if (!orderDate) {
-      setMessage("Order date is required.");
-      setLoading(false);
-      return;
-    }
-    const cycleData = {
-      order_date: orderDate,
-      created_by: session?.user?.email || null,
-    };
-
-    let cycleId: string;
-    if (editingCycle) {
-      const { error } = await supabase
-        .from("order_cycles")
-        .update(cycleData)
-        .eq("id", editingCycle.id);
-      if (error) {
-        setMessage(error.message);
-        setLoading(false);
+    try {
+      // Status is machine-driven (draft → allocated → delivered) so we never
+      // include it in the upsert. Inserts let the DB default to 'draft';
+      // updates leave whatever the run/finalize endpoints set.
+      if (!orderDate) {
+        setMessage("Order date is required.");
         return;
       }
-      cycleId = editingCycle.id;
-    } else {
-      const { data, error } = await supabase
-        .from("order_cycles")
-        .insert([cycleData])
-        .select()
-        .single();
-      if (error) {
-        setMessage(error.message);
-        setLoading(false);
-        return;
-      }
-      cycleId = data.id;
-    }
+      const cycleData = {
+        order_date: orderDate,
+        created_by: session?.user?.email || null,
+      };
 
-    // Diff-based cycle_stores update so a failed INSERT (e.g. validation
-    // trigger rejecting an already-in-another-cycle store) doesn't leave
-    // the cycle with zero stores. INSERT runs first; only on success do
-    // we DELETE the now-removed ones.
-    if (editingCycle) {
-      const existingStoreIds = new Set(
-        editingCycle.cycle_stores?.map((cs) => cs.stores.id) ?? [],
-      );
-      const selectedSet = new Set(selectedStoreIds);
-      const toAdd = selectedStoreIds.filter((id) => !existingStoreIds.has(id));
-      const toRemove = [...existingStoreIds].filter(
-        (id) => !selectedSet.has(id),
-      );
-      if (toAdd.length > 0) {
+      let cycleId: string;
+      if (editingCycle) {
+        const { error } = await supabase
+          .from("order_cycles")
+          .update(cycleData)
+          .eq("id", editingCycle.id);
+        if (error) {
+          setMessage(error.message);
+          return;
+        }
+        cycleId = editingCycle.id;
+      } else {
+        const { data, error } = await supabase
+          .from("order_cycles")
+          .insert([cycleData])
+          .select()
+          .single();
+        if (error) {
+          setMessage(error.message);
+          return;
+        }
+        cycleId = data.id;
+      }
+
+      // Diff-based cycle_stores update so a failed INSERT (e.g. validation
+      // trigger rejecting an already-in-another-cycle store) doesn't leave
+      // the cycle with zero stores. INSERT runs first; only on success do
+      // we DELETE the now-removed ones.
+      if (editingCycle) {
+        const existingStoreIds = new Set(
+          editingCycle.cycle_stores?.map((cs) => cs.stores.id) ?? [],
+        );
+        const selectedSet = new Set(selectedStoreIds);
+        const toAdd = selectedStoreIds.filter((id) => !existingStoreIds.has(id));
+        const toRemove = [...existingStoreIds].filter(
+          (id) => !selectedSet.has(id),
+        );
+        if (toAdd.length > 0) {
+          const { error } = await supabase.from("cycle_stores").insert(
+            toAdd.map((id) => ({ cycle_id: cycleId, store_id: id })),
+          );
+          if (error) {
+            setMessage(error.message);
+            return;
+          }
+        }
+        if (toRemove.length > 0) {
+          const { error } = await supabase
+            .from("cycle_stores")
+            .delete()
+            .eq("cycle_id", cycleId)
+            .in("store_id", toRemove);
+          if (error) {
+            setMessage(error.message);
+            return;
+          }
+        }
+      } else if (selectedStoreIds.length > 0) {
         const { error } = await supabase.from("cycle_stores").insert(
-          toAdd.map((id) => ({ cycle_id: cycleId, store_id: id })),
+          selectedStoreIds.map((id) => ({ cycle_id: cycleId, store_id: id })),
         );
         if (error) {
           setMessage(error.message);
-          setLoading(false);
           return;
         }
       }
-      if (toRemove.length > 0) {
-        const { error } = await supabase
-          .from("cycle_stores")
-          .delete()
-          .eq("cycle_id", cycleId)
-          .in("store_id", toRemove);
-        if (error) {
-          setMessage(error.message);
-          setLoading(false);
-          return;
-        }
-      }
-    } else if (selectedStoreIds.length > 0) {
-      const { error } = await supabase.from("cycle_stores").insert(
-        selectedStoreIds.map((id) => ({ cycle_id: cycleId, store_id: id })),
-      );
-      if (error) {
-        setMessage(error.message);
-        setLoading(false);
-        return;
-      }
-    }
 
-    setLoading(false);
-    setMessage(editingCycle ? "Cycle updated." : "Cycle created.");
-    setShowForm(false);
-    setEditingCycle(null);
-    setOrderDate("");
-    setSelectedStoreIds([]);
-    await reloadCycles();
+      setMessage(editingCycle ? "Cycle updated." : "Cycle created.");
+      setShowForm(false);
+      setEditingCycle(null);
+      setOrderDate("");
+      setSelectedStoreIds([]);
+      await reloadCycles();
+    } catch (err) {
+      setMessage(
+        `Couldn't save cycle: ${
+          err instanceof Error ? err.message : "network timeout"
+        }. Try again.`,
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleEdit = (cycle: OrderCycle) => {
@@ -266,14 +269,22 @@ export default function AdminCycles() {
       return;
     }
     if (!confirm(`Delete cycle "${formatCycleName(cycle)}"? This cannot be undone.`)) return;
-    const { error } = await supabase.from("order_cycles").delete().eq("id", cycle.id);
-    if (error) {
-      setMessage(error.message);
-      return;
+    try {
+      const { error } = await supabase.from("order_cycles").delete().eq("id", cycle.id);
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      setMessage("Cycle deleted.");
+      if (selectedCycleId === cycle.id) setSelectedCycleId(null);
+      setCycles(cycles.filter((c) => c.id !== cycle.id));
+    } catch (err) {
+      setMessage(
+        `Couldn't delete cycle: ${
+          err instanceof Error ? err.message : "network timeout"
+        }. Try again.`,
+      );
     }
-    setMessage("Cycle deleted.");
-    if (selectedCycleId === cycle.id) setSelectedCycleId(null);
-    setCycles(cycles.filter((c) => c.id !== cycle.id));
   };
 
   const openManagePanel = (cycle: OrderCycle) => {
@@ -1729,25 +1740,34 @@ function AllocationsTab({
     }
     setFormLoading(true);
     setMessage(null);
-    const { error } = await supabase.from("allocation_overrides").upsert(
-      [{
-        cycle_id: cycleId,
-        store_id: storeId,
-        item_id: itemId,
-        qty: qtyNum,
-        reason: reason.trim() || null,
-        mode,
-      }],
-      { onConflict: "cycle_id,store_id,item_id" },
-    );
-    setFormLoading(false);
-    if (error) {
-      setMessage(error.message);
-      return;
+    try {
+      const { error } = await supabase.from("allocation_overrides").upsert(
+        [{
+          cycle_id: cycleId,
+          store_id: storeId,
+          item_id: itemId,
+          qty: qtyNum,
+          reason: reason.trim() || null,
+          mode,
+        }],
+        { onConflict: "cycle_id,store_id,item_id" },
+      );
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      setMessage(editingKey ? "Override updated. Re-run allocations to apply." : "Override created. Re-run allocations to apply.");
+      setOverrideDraft(emptyOverrideDraft);
+      await reload();
+    } catch (err) {
+      setMessage(
+        `Couldn't save override: ${
+          err instanceof Error ? err.message : "network timeout"
+        }. Try again.`,
+      );
+    } finally {
+      setFormLoading(false);
     }
-    setMessage(editingKey ? "Override updated. Re-run allocations to apply." : "Override created. Re-run allocations to apply.");
-    setOverrideDraft(emptyOverrideDraft);
-    await reload();
   };
 
   const handleDeleteOverride = async () => {
@@ -1757,20 +1777,29 @@ function AllocationsTab({
     if (!confirm(`Delete override for ${storeName} / ${itemName}?`)) return;
     setFormLoading(true);
     setMessage(null);
-    const { error } = await supabase
-      .from("allocation_overrides")
-      .delete()
-      .eq("cycle_id", cycleId)
-      .eq("store_id", storeId)
-      .eq("item_id", itemId);
-    setFormLoading(false);
-    if (error) {
-      setMessage(error.message);
-      return;
+    try {
+      const { error } = await supabase
+        .from("allocation_overrides")
+        .delete()
+        .eq("cycle_id", cycleId)
+        .eq("store_id", storeId)
+        .eq("item_id", itemId);
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      setMessage("Override deleted. Re-run allocations to apply.");
+      setOverrideDraft(emptyOverrideDraft);
+      await reload();
+    } catch (err) {
+      setMessage(
+        `Couldn't delete override: ${
+          err instanceof Error ? err.message : "network timeout"
+        }. Try again.`,
+      );
+    } finally {
+      setFormLoading(false);
     }
-    setMessage("Override deleted. Re-run allocations to apply.");
-    setOverrideDraft(emptyOverrideDraft);
-    await reload();
   };
 
   const columnDefs: ColDef<AllocationRow>[] = [

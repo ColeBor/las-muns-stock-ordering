@@ -204,23 +204,28 @@ export default function EmployeeRequests() {
       complaint_against: category === "Complaint" ? complaintAgainst.trim() : null,
       description: description.trim(),
     };
-    const { error } = await supabase.from("employee_requests").insert([payload]);
-    setSubmitting(false);
-    if (error) {
-      setMessage(error.message);
-      return;
+    try {
+      const { error } = await supabase.from("employee_requests").insert([payload]);
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      setCategory("");
+      setComplaintAgainst("");
+      setDescription("");
+      if (payload.category === "Complaint") {
+        // The submitter can't see complaints in their log per design. Surface
+        // an explicit confirmation so they know it actually went through.
+        setMessage("Complaint sent to Store Managers. For privacy, it won't show in your list below.");
+      } else {
+        setMessage("Sent. A Store Manager will review it.");
+      }
+      loadRequests();
+    } catch (err) {
+      setMessage(`Couldn't submit: ${err instanceof Error ? err.message : "network timeout"}. Try again.`);
+    } finally {
+      setSubmitting(false);
     }
-    setCategory("");
-    setComplaintAgainst("");
-    setDescription("");
-    if (payload.category === "Complaint") {
-      // The submitter can't see complaints in their log per design. Surface
-      // an explicit confirmation so they know it actually went through.
-      setMessage("Complaint sent to Store Managers. For privacy, it won't show in your list below.");
-    } else {
-      setMessage("Sent. A Store Manager will review it.");
-    }
-    loadRequests();
   };
 
   const handleReply = async (requestId: string) => {
@@ -231,22 +236,27 @@ export default function EmployeeRequests() {
     }
     setReplySaving(requestId);
     setMessage(null);
-    const { error } = await supabase.from("employee_request_comments").insert([
-      {
-        request_id: requestId,
-        author_user_id: session?.user?.id ?? null,
-        author_label: session?.user?.email ?? null,
-        author_role: "employee",
-        body,
-      },
-    ]);
-    setReplySaving(null);
-    if (error) {
-      setMessage(error.message);
-      return;
+    try {
+      const { error } = await supabase.from("employee_request_comments").insert([
+        {
+          request_id: requestId,
+          author_user_id: session?.user?.id ?? null,
+          author_label: session?.user?.email ?? null,
+          author_role: "employee",
+          body,
+        },
+      ]);
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      setReplyDraft((prev) => ({ ...prev, [requestId]: "" }));
+      loadComments();
+    } catch (err) {
+      setMessage(`Couldn't send reply: ${err instanceof Error ? err.message : "network timeout"}. Try again.`);
+    } finally {
+      setReplySaving(null);
     }
-    setReplyDraft((prev) => ({ ...prev, [requestId]: "" }));
-    loadComments();
   };
 
   const handleSignOut = async () => {

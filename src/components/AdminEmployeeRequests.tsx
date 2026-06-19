@@ -193,17 +193,23 @@ export default function AdminEmployeeRequests() {
       // doesn't dangle on a non-resolved status.
       update.resolution_note = null;
     }
-    const { error } = await supabase
-      .from("employee_requests")
-      .update(update)
-      .eq("id", req.id);
-    setStatusSavingId(null);
-    if (error) {
-      setMessage(error.message);
+    try {
+      const { error } = await supabase
+        .from("employee_requests")
+        .update(update)
+        .eq("id", req.id);
+      if (error) {
+        setMessage(error.message);
+        return false;
+      }
+      loadRequests();
+      return true;
+    } catch (err) {
+      setMessage(`Couldn't update status: ${err instanceof Error ? err.message : "network timeout"}. Try again.`);
       return false;
+    } finally {
+      setStatusSavingId(null);
     }
-    loadRequests();
-    return true;
   };
 
   const handleMarkInProgress = (req: EmployeeRequest) => setStatus(req, "in_progress");
@@ -218,32 +224,36 @@ export default function AdminEmployeeRequests() {
     }
     setNeedInfoSavingId(req.id);
     setMessage(null);
-    const { error: cErr } = await supabase.from("employee_request_comments").insert([
-      {
-        request_id: req.id,
-        author_user_id: session?.user?.id ?? null,
-        author_label: session?.user?.email ?? null,
-        author_role: "hq",
-        body,
-      },
-    ]);
-    if (cErr) {
+    try {
+      const { error: cErr } = await supabase.from("employee_request_comments").insert([
+        {
+          request_id: req.id,
+          author_user_id: session?.user?.id ?? null,
+          author_label: session?.user?.email ?? null,
+          author_role: "hq",
+          body,
+        },
+      ]);
+      if (cErr) {
+        setMessage(cErr.message);
+        return;
+      }
+      const { error: sErr } = await supabase
+        .from("employee_requests")
+        .update({ status: "need_info" })
+        .eq("id", req.id);
+      if (sErr) {
+        setMessage(sErr.message);
+        return;
+      }
+      setNeedInfoDraft((prev) => ({ ...prev, [req.id]: "" }));
+      loadRequests();
+      loadComments();
+    } catch (err) {
+      setMessage(`Couldn't request info: ${err instanceof Error ? err.message : "network timeout"}. Try again.`);
+    } finally {
       setNeedInfoSavingId(null);
-      setMessage(cErr.message);
-      return;
     }
-    const { error: sErr } = await supabase
-      .from("employee_requests")
-      .update({ status: "need_info" })
-      .eq("id", req.id);
-    setNeedInfoSavingId(null);
-    if (sErr) {
-      setMessage(sErr.message);
-      return;
-    }
-    setNeedInfoDraft((prev) => ({ ...prev, [req.id]: "" }));
-    loadRequests();
-    loadComments();
   };
 
 
