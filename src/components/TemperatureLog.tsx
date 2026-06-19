@@ -244,7 +244,7 @@ export default function TemperatureLog() {
         // Postgres unique_violation — friendly message instead of the raw
         // "duplicate key value violates unique constraint ..." string.
         if (error.code === "23505") {
-          setMessage(`A fridge named "${trimmed}" already exists in this store.`);
+          setMessage(`A ${newFridgeKind} named "${trimmed}" already exists in this store.`);
         } else {
           setMessage(error.message);
         }
