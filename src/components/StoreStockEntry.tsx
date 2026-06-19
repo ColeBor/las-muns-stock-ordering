@@ -145,9 +145,18 @@ export default function StoreStockEntry() {
           entered_by: session?.user?.email ?? session?.user?.id ?? null,
         }));
       if (missing.length > 0) {
+        // INSERT-only (ON CONFLICT DO NOTHING): backfill the rows the worker
+        // never touched at their default (0), but NEVER overwrite a value they
+        // already saved. Clicking Finish right after editing a cell races the
+        // per-cell save and, with a plain (overwriting) upsert, this sweep
+        // could clobber the just-typed value with a stale 0 read from gridData
+        // — the "order sheet didn't keep my last value" bug.
         const { error: upsertErr } = await supabase
           .from("stock_entries")
-          .upsert(missing, { onConflict: "cycle_id,store_id,item_id" });
+          .upsert(missing, {
+            onConflict: "cycle_id,store_id,item_id",
+            ignoreDuplicates: true,
+          });
         if (upsertErr) {
           setMessage(upsertErr.message);
           setFinishToggling(false);
