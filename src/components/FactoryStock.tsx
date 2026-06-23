@@ -483,12 +483,6 @@ export default function FactoryStock() {
         backgroundColor: params.data?.has_existing_count ? '#1f2937' : '#374151',
       }),
     },
-    { headerName: "Allocatable", field: "allocatable_qty", sortable: true, filter: true, width: 130,
-      cellStyle: () => ({
-        backgroundColor: '#1e3a2f',
-        color: '#10b981',
-      }),
-    },
     { headerName: "Allocated", field: "total_allocated", sortable: true, filter: true, width: 115 },
     {
       headerName: "Remaining",
@@ -744,7 +738,7 @@ export default function FactoryStock() {
               <li>Available drops <strong>automatically</strong> when a cycle is marked delivered — the quantities shipped out of this factory leave the count, so you don&apos;t have to re-subtract by hand.</li>
               <li>Changes are saved automatically when you finish editing a cell</li>
               <li>Cells with darker backgrounds already have saved counts</li>
-              <li><strong className="text-green-400">Allocatable:</strong> all of your Available stock (the factory holds its own safety reserve back manually now)</li>
+              <li><strong className="text-green-400">Available</strong> is your full on-hand and all of it is allocatable — the factory holds its own safety reserve back manually now</li>
               <li>Pick a cycle to see what got allocated and what&apos;s left for it (Remaining turns red if negative). Leave empty to focus on on-hand only.</li>
               <li>Switch the Factory dropdown to <strong>Master factory</strong> for a read-only view aggregated across every factory</li>
             </ul>

@@ -231,7 +231,6 @@ export default function HomeAdminLinks() {
       <AdminSection title="Order Cycle">
         <AdminLink href="/admin/cycles">Cycles</AdminLink>
         <AdminLink href="/factory-stock">Factory Stock</AdminLink>
-        <AdminLink href="/scheduled-orders">Scheduled Orders</AdminLink>
       </AdminSection>
 
       <AdminSection title="Configuration">

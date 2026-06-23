@@ -39,6 +39,7 @@ const EMPLOYEE_LINKS: Array<{ href: string; label: string }> = [
   { href: "/requests", label: "Requests & Issues" },
   { href: "/training", label: "Training" },
 ];
+// /scheduled-orders intentionally omitted — the Otter-backed feature is inert.
 
 // Mirrors the home-page admin sections so jumping between admin pages
 // doesn't require going Home first. Order matches HomeAdminLinks:
@@ -50,7 +51,6 @@ const ADMIN_LINKS: Array<{ href: string; label: string }> = [
   { href: "/admin/waste-analytics", label: "Waste Analytics" },
   { href: "/admin/cycles", label: "Cycles" },
   { href: "/factory-stock", label: "Factory Stock" },
-  { href: "/scheduled-orders", label: "Scheduled Orders" },
   { href: "/admin/directory", label: "Directory" },
   { href: "/admin/items", label: "Items" },
   { href: "/admin/bake-expected", label: "Bake Count" },
