@@ -191,15 +191,15 @@ export default function StoreItemMatrix({ viewSelector }: { viewSelector?: React
           ) : items.length === 0 || stores.length === 0 ? (
             <p className="text-sm text-slate-500">Need at least one item and one store.</p>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="max-h-[70vh] overflow-auto rounded-2xl border border-white/10">
               <table className="text-sm">
                 <thead>
                   <tr>
-                    <th className="sticky left-0 z-10 bg-slate-950/90 px-3 py-2 text-left text-xs uppercase tracking-wider text-slate-400">
+                    <th className="sticky left-0 top-0 z-30 bg-slate-950 px-3 py-2 text-left text-xs uppercase tracking-wider text-slate-400">
                       Item
                     </th>
                     {stores.map((s) => (
-                      <th key={s.id} className="px-3 py-2 text-center">
+                      <th key={s.id} className="sticky top-0 z-20 bg-slate-950 px-3 py-2 text-center">
                         <div className="text-xs font-semibold text-slate-200">{s.name}</div>
                         <button
                           type="button"
@@ -229,7 +229,7 @@ export default function StoreItemMatrix({ viewSelector }: { viewSelector?: React
                           </tr>
                         )}
                         <tr className="text-slate-200">
-                          <td className="sticky left-0 z-10 bg-slate-950/90 px-3 py-2 whitespace-nowrap">
+                          <td className="sticky left-0 z-10 bg-slate-950 px-3 py-2 whitespace-nowrap">
                             <span className="font-medium">{it.name}</span>
                             <button
                               type="button"

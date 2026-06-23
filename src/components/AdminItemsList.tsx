@@ -55,6 +55,7 @@ export default function AdminItemsList({
   const [retailPricePerUnit, setRetailPricePerUnit] = useState<string>("");
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState("");
 
   const canManage = isStoreManager;
 
@@ -734,11 +735,20 @@ export default function AdminItemsList({
 
           {message && <p className="text-sm text-cyan-300">{message}</p>}
 
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search items (name, supplier, category…)"
+            className="mb-3 w-full max-w-sm rounded-2xl border border-white/10 bg-slate-950 px-4 py-2.5 text-sm text-white outline-none focus:border-cyan-400"
+          />
+
           <div style={{ height: 500 }}>
             <AgGridReact
               rowData={items}
               columnDefs={columnDefs}
               defaultColDef={{ resizable: true, sortable: true, filter: true }}
+              quickFilterText={search}
               onCellValueChanged={handleCellValueChanged}
               stopEditingWhenCellsLoseFocus
             />
