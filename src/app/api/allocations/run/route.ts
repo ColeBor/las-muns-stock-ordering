@@ -1,7 +1,10 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { NextRequest, NextResponse } from "next/server";
 
-const RESERVE_PER_FACTORY_ITEM = 1;
+// The factory now holds back its own safety stock manually at the factory, so
+// the allocator no longer auto-reserves a unit per (factory, item) — the full
+// on-hand count is allocatable.
+const RESERVE_PER_FACTORY_ITEM = 0;
 
 type StockEntry = {
   cycle_id: string;

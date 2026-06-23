@@ -332,11 +332,10 @@ export default function FactoryStock() {
 
         const totalAllocated = itemAllocations.reduce((sum, alloc) => sum + alloc.qty, 0);
         const availableQty = matchingInventory.reduce((sum, r) => sum + r.on_hand_qty, 0);
-        const reserveQty = matchingInventory.length; // 1 reserved per factory holding this item
-        const allocatableQty = matchingInventory.reduce(
-          (sum, r) => sum + Math.max(0, r.on_hand_qty - 1),
-          0,
-        );
+        // No auto-reserve anymore — the factory keeps its own safety stock back
+        // manually, so the full on-hand is allocatable.
+        const reserveQty = 0;
+        const allocatableQty = availableQty;
 
         return {
           item_id: item.id,
@@ -743,10 +742,9 @@ export default function FactoryStock() {
               <li>Edit &quot;Available&quot; any time — counts roll forward independently of cycles. The allocator reads from this on every run and snapshots it for audit.</li>
               <li><strong className="text-sky-300">Log production</strong> (button above the grid): add what you just baked and it&apos;s <em>added</em> to Available. Edit &quot;Available&quot; directly to set an exact recount.</li>
               <li>Available drops <strong>automatically</strong> when a cycle is marked delivered — the quantities shipped out of this factory leave the count, so you don&apos;t have to re-subtract by hand.</li>
-              <li>1 unit per factory is reserved automatically and excluded from Allocatable</li>
               <li>Changes are saved automatically when you finish editing a cell</li>
               <li>Cells with darker backgrounds already have saved counts</li>
-              <li><strong className="text-green-400">Allocatable:</strong> Available stock minus the per-factory reserve</li>
+              <li><strong className="text-green-400">Allocatable:</strong> all of your Available stock (the factory holds its own safety reserve back manually now)</li>
               <li>Pick a cycle to see what got allocated and what&apos;s left for it (Remaining turns red if negative). Leave empty to focus on on-hand only.</li>
               <li>Switch the Factory dropdown to <strong>Master factory</strong> for a read-only view aggregated across every factory</li>
             </ul>
