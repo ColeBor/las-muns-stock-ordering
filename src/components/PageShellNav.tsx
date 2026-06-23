@@ -61,6 +61,7 @@ const ADMIN_LINKS: Array<{ href: string; label: string }> = [
 // Factory Workers' link set.
 const FACTORY_LINKS: Array<{ href: string; label: string }> = [
   { href: "/factory-stock", label: "Factory Stock" },
+  { href: "/factory-bake", label: "Bake Schedule" },
   { href: "/ingredients", label: "Ingredients" },
   { href: "/recipes", label: "Recipes" },
 ];
