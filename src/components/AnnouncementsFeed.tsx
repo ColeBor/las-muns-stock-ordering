@@ -16,6 +16,7 @@ type Announcement = {
   expires_on: string | null;
   day_of_week: number | null;
   on_date: string | null;
+  pinned_until: string | null;
   is_active: boolean;
 };
 
@@ -47,7 +48,7 @@ export default function AnnouncementsFeed() {
     const { data, error } = await supabase
       .from("announcements")
       .select(
-        "id,kind,title,body,all_stores,starts_on,expires_on,day_of_week,on_date,is_active",
+        "id,kind,title,body,all_stores,starts_on,expires_on,day_of_week,on_date,pinned_until,is_active",
       )
       .order("created_at", { ascending: false });
     if (error) {
@@ -67,20 +68,28 @@ export default function AnnouncementsFeed() {
     "home-announcements-feed",
   );
 
+  // Local "today" — also used in render to badge pinned items.
+  const today = todayLocalDate();
+  const isPinned = (a: Announcement) => a.pinned_until !== null && today <= a.pinned_until;
+
   const todaysItems = useMemo(() => {
-    const today = todayLocalDate();
     // JS getDay(): 0=Sunday … 6=Saturday, matching day_of_week in the DB.
     const dow = new Date().getDay();
-    return rows.filter((a) => {
-      if (!a.is_active) return false; // managers can see inactive via RLS
-      if (a.kind === "weekly") return a.day_of_week === dow;
-      if (a.kind === "date") return a.on_date === today;
-      // manual: inside its optional [starts_on, expires_on] window.
-      if (a.starts_on && today < a.starts_on) return false;
-      if (a.expires_on && today > a.expires_on) return false;
-      return true;
-    });
-  }, [rows]);
+    const pinned = (a: Announcement) => a.pinned_until !== null && today <= a.pinned_until;
+    return rows
+      .filter((a) => {
+        if (!a.is_active) return false; // managers can see inactive via RLS
+        if (pinned(a)) return true; // pinned always shows, on top of its schedule
+        if (a.kind === "weekly") return a.day_of_week === dow;
+        if (a.kind === "date") return a.on_date === today;
+        // manual: inside its optional [starts_on, expires_on] window.
+        if (a.starts_on && today < a.starts_on) return false;
+        if (a.expires_on && today > a.expires_on) return false;
+        return true;
+      })
+      // Pinned floats to the top; stable sort keeps created_at desc otherwise.
+      .sort((a, b) => Number(pinned(b)) - Number(pinned(a)));
+  }, [rows, today]);
 
   if (todaysItems.length === 0) return null;
 
@@ -93,7 +102,7 @@ export default function AnnouncementsFeed() {
         {todaysItems.map((a) => (
           <li key={a.id} className="flex gap-2.5">
             <span className="mt-0.5 shrink-0" aria-hidden>
-              {KIND_LABEL[a.kind].icon}
+              {isPinned(a) ? "📌" : KIND_LABEL[a.kind].icon}
             </span>
             <div className="min-w-0">
               <p className="text-sm font-semibold text-white">{a.title}</p>

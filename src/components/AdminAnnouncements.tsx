@@ -18,6 +18,7 @@ type Announcement = {
   expires_on: string | null;
   day_of_week: number | null;
   on_date: string | null;
+  pinned_until: string | null;
   is_active: boolean;
   created_by_label: string | null;
   created_at: string;
@@ -62,6 +63,7 @@ export default function AdminAnnouncements() {
   const [onDate, setOnDate] = useState("");
   const [allStores, setAllStores] = useState(true);
   const [targetStoreIds, setTargetStoreIds] = useState<string[]>([]);
+  const [pinnedUntil, setPinnedUntil] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -82,7 +84,7 @@ export default function AdminAnnouncements() {
       supabase
         .from("announcements")
         .select(
-          "id,kind,title,body,all_stores,starts_on,expires_on,day_of_week,on_date,is_active,created_by_label,created_at",
+          "id,kind,title,body,all_stores,starts_on,expires_on,day_of_week,on_date,pinned_until,is_active,created_by_label,created_at",
         )
         .order("created_at", { ascending: false }),
       supabase.from("announcement_stores").select("announcement_id,store_id"),
@@ -137,6 +139,7 @@ export default function AdminAnnouncements() {
     setOnDate("");
     setAllStores(true);
     setTargetStoreIds([]);
+    setPinnedUntil("");
   };
 
   const handleCreate = async () => {
@@ -168,6 +171,7 @@ export default function AdminAnnouncements() {
         expires_on: kind === "manual" && expiresOn ? expiresOn : null,
         day_of_week: kind === "weekly" ? dayOfWeek : null,
         on_date: kind === "date" ? onDate : null,
+        pinned_until: pinnedUntil || null,
         is_active: true,
         created_by_user_id: session?.user?.id ?? null,
         created_by_label: session?.user?.email ?? null,
@@ -215,6 +219,16 @@ export default function AdminAnnouncements() {
     if (!confirm(`Delete "${a.title}"?`)) return;
     setMessage(null);
     const { error } = await supabase.from("announcements").delete().eq("id", a.id);
+    if (error) setMessage(error.message);
+    else load();
+  };
+
+  const handleSetPin = async (a: Announcement, pinned_until: string | null) => {
+    setMessage(null);
+    const { error } = await supabase
+      .from("announcements")
+      .update({ pinned_until })
+      .eq("id", a.id);
     if (error) setMessage(error.message);
     else load();
   };
@@ -441,6 +455,23 @@ export default function AdminAnnouncements() {
             </div>
 
             <div>
+              <label htmlFor="ann-pin" className="block text-sm font-medium text-slate-300">
+                📌 Pin to top until (optional)
+              </label>
+              <input
+                id="ann-pin"
+                type="date"
+                value={pinnedUntil}
+                onChange={(e) => setPinnedUntil(e.target.value)}
+                className={inputClass}
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                A pinned post stays at the top of the staff feed every day until this date,
+                on top of its normal schedule.
+              </p>
+            </div>
+
+            <div>
               <button
                 type="button"
                 onClick={handleCreate}
@@ -477,6 +508,11 @@ export default function AdminAnnouncements() {
                             paused
                           </span>
                         )}
+                        {a.pinned_until && (
+                          <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-xs font-semibold text-amber-200">
+                            📌 until {formatDate(a.pinned_until)}
+                          </span>
+                        )}
                       </div>
                       {a.body && (
                         <p className="mt-1 text-sm text-slate-300 whitespace-pre-wrap">{a.body}</p>
@@ -485,6 +521,24 @@ export default function AdminAnnouncements() {
                         {scheduleSummary(a)} · {targetSummary(a)}
                         {a.created_by_label ? ` · by ${a.created_by_label}` : ""}
                       </p>
+                      <div className="mt-2 flex items-center gap-2 text-xs text-slate-400">
+                        <span>📌 Pin until:</span>
+                        <input
+                          type="date"
+                          value={a.pinned_until ?? ""}
+                          onChange={(e) => handleSetPin(a, e.target.value || null)}
+                          className="rounded-lg border border-white/10 bg-slate-950 px-2 py-1 text-xs text-white outline-none focus:border-cyan-400"
+                        />
+                        {a.pinned_until && (
+                          <button
+                            type="button"
+                            onClick={() => handleSetPin(a, null)}
+                            className="text-slate-400 hover:text-slate-200 underline-offset-2 hover:underline"
+                          >
+                            Unpin
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <div className="flex items-center gap-2">
                       <button
