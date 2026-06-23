@@ -232,6 +232,7 @@ export default function HomeAdminLinks() {
         <AdminLink href="/admin/cycles">Cycles</AdminLink>
         <AdminLink href="/factory-stock">Factory Stock</AdminLink>
         <AdminLink href="/ingredients">Ingredients</AdminLink>
+        <AdminLink href="/recipes">Recipes</AdminLink>
       </AdminSection>
 
       <AdminSection title="Configuration">

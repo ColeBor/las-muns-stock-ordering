@@ -242,6 +242,12 @@ export default function HomeGate() {
                       >
                         Ingredients
                       </Link>
+                      <Link
+                        href="/recipes"
+                        className="inline-flex items-center justify-center rounded-full bg-amber-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-amber-400"
+                      >
+                        Recipes
+                      </Link>
                     </div>
                   </div>
                 )}
