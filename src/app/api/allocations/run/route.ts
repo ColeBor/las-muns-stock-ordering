@@ -23,6 +23,9 @@ type Item = {
   id: string;
   type: "manufactured" | "purchased";
   supplier_id: string | null;
+  // Purchased items with this flag are stocked + allocated like manufactured
+  // ones (from factory_inventory, with shortfalls) rather than unlimited supply.
+  track_factory_stock: boolean;
 };
 
 // Live per-(factory, item) on-hand count. Replaces the old factory_counts
@@ -159,7 +162,7 @@ export async function POST(request: NextRequest) {
       .eq("cycle_id", cycle_id),
     supabaseAdmin
       .from("items")
-      .select("id,type,supplier_id"),
+      .select("id,type,supplier_id,track_factory_stock"),
     supabaseAdmin
       .from("cycle_stores")
       .select("store_id")
@@ -314,13 +317,18 @@ export async function POST(request: NextRequest) {
     const item = itemsById.get(item_id);
     if (!item) continue;
 
+    // Manufactured, or a purchased item flagged to be stocked at the factory →
+    // allocate from factory_inventory (with shortfalls). Everything else is
+    // purchased = unlimited supply.
+    const factoryStocked = item.type === "manufactured" || item.track_factory_stock;
+
     const baseSource: AllocationRow["source"] = override
       ? "manual_override"
-      : item.type === "manufactured"
+      : factoryStocked
         ? "factory"
         : "purchase";
 
-    if (item.type === "manufactured") {
+    if (factoryStocked) {
       manufacturedStates.set(key, {
         store_id,
         item_id,

@@ -21,6 +21,7 @@ type Item = {
   sub_category: string | null;
   packaging_type: string | null;
   is_serveable: boolean;
+  track_factory_stock: boolean;
   cost_per_unit: number | null;
   retail_price_per_unit: number | null;
   created_at: string;
@@ -49,6 +50,7 @@ export default function AdminItemsList({
   const [subCategory, setSubCategory] = useState("");
   const [packagingType, setPackagingType] = useState("");
   const [isServeable, setIsServeable] = useState(false);
+  const [trackFactoryStock, setTrackFactoryStock] = useState(false);
   const [costPerUnit, setCostPerUnit] = useState<string>("");
   const [retailPricePerUnit, setRetailPricePerUnit] = useState<string>("");
   const [message, setMessage] = useState<string | null>(null);
@@ -110,6 +112,7 @@ export default function AdminItemsList({
     setSubCategory("");
     setPackagingType("");
     setIsServeable(false);
+    setTrackFactoryStock(false);
     setCostPerUnit("");
     setRetailPricePerUnit("");
   };
@@ -146,6 +149,8 @@ export default function AdminItemsList({
       sub_category: subCategory || null,
       packaging_type: packagingType || null,
       is_serveable: isServeable,
+      // Only meaningful for purchased items; force false for manufactured.
+      track_factory_stock: supplierId !== "" && trackFactoryStock,
       cost_per_unit: cost,
       retail_price_per_unit: retail,
     };
@@ -184,6 +189,7 @@ export default function AdminItemsList({
     setSubCategory(item.sub_category || "");
     setPackagingType(item.packaging_type || "");
     setIsServeable(!!item.is_serveable);
+    setTrackFactoryStock(!!item.track_factory_stock);
     setCostPerUnit(item.cost_per_unit === null ? "" : String(item.cost_per_unit));
     setRetailPricePerUnit(
       item.retail_price_per_unit === null ? "" : String(item.retail_price_per_unit),
@@ -410,9 +416,12 @@ export default function AdminItemsList({
       headerName: "Supplier",
       // Empty supplier means we make it ourselves. The allocator routes
       // these through factory_inventory; everything else goes through POs.
-      valueGetter: (params) =>
-        params.data?.suppliers?.name ??
-        (params.data ? (params.data.type === "manufactured" ? "Manufactured" : "Purchased") : ""),
+      valueGetter: (params) => {
+        const d = params.data;
+        if (!d) return "";
+        const base = d.suppliers?.name ?? (d.type === "manufactured" ? "Manufactured" : "Purchased");
+        return d.type === "purchased" && d.track_factory_stock ? `${base} (stocked)` : base;
+      },
       sortable: true,
       filter: true,
       flex: 1,
@@ -599,6 +608,23 @@ export default function AdminItemsList({
                     &quot;Purchased — no specific supplier&quot; for a generic one.
                   </p>
                 </div>
+                {supplierId !== "" && (
+                  <div>
+                    <label className="flex items-center gap-2 text-sm text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={trackFactoryStock}
+                        onChange={(e) => setTrackFactoryStock(e.target.checked)}
+                        className="h-4 w-4 rounded border-slate-600 bg-slate-800"
+                      />
+                      Track factory stock (treat like Manufactured)
+                    </label>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Keep a factory on-hand amount for this purchased item and allocate it from
+                      factory stock with shortfalls, instead of unlimited supply.
+                    </p>
+                  </div>
+                )}
                 <div>
                   <label htmlFor="sub" className="block text-sm font-medium text-slate-300">Sub Category</label>
                   <select

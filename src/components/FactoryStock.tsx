@@ -303,12 +303,13 @@ export default function FactoryStock() {
       return;
     }
 
-    // Get all manufactured items (since factories only produce manufactured items)
+    // Manufactured items + any purchased item flagged to be stocked at the
+    // factory (track_factory_stock) — both are counted/allocated here.
     const loadManufacturedItems = async () => {
       const { data: itemsData, error } = await supabase
         .from("items")
         .select("id,name,type,sub_category,packaging_type")
-        .eq("type", "manufactured");
+        .or("type.eq.manufactured,track_factory_stock.eq.true");
 
       if (error || !itemsData) {
         setGridData([]);
