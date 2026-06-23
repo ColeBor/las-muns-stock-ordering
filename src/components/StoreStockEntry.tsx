@@ -33,6 +33,7 @@ type StoreItem = {
     name: string;
     sub_category: string | null;
     packaging_type: string | null;
+    pack_qty: number | null;
   };
 };
 
@@ -56,6 +57,7 @@ type StockEntryRow = {
   has_existing_entry: boolean;
   sub_category: string | null;
   packaging_type: string | null;
+  pack_qty: number | null;
   // True when this is a box-traced item the store has never written an
   // entry for in any prior delivered cycle. The worker needs to do a
   // one-time calibration count; after that, traces handle decrements.
@@ -200,7 +202,7 @@ export default function StoreStockEntry() {
         supabase.from("stores").select("id,name").eq("id", effectiveStoreId).single(),
         supabase
           .from("store_items")
-          .select("item_id,is_active,capacity,items(name,sub_category,packaging_type)")
+          .select("item_id,is_active,capacity,items(name,sub_category,packaging_type,pack_qty)")
           .eq("store_id", effectiveStoreId)
           .order("item_id"),
         supabase
@@ -382,6 +384,7 @@ export default function StoreStockEntry() {
           has_existing_entry: !!existingEntry,
           sub_category,
           packaging_type: storeItem.items?.packaging_type || null,
+          pack_qty: storeItem.items?.pack_qty ?? null,
           needs_calibration,
         };
       });
@@ -453,7 +456,22 @@ export default function StoreStockEntry() {
   const columnDefs: ColDef<StockEntryRow>[] = [
     { headerName: "Category", field: "sub_category", sortable: true, filter: true, width: 120 },
     { headerName: "Item", field: "item_name", sortable: true, filter: true, flex: 2, minWidth: 150 },
-    { headerName: "Packaging", field: "packaging_type", sortable: true, filter: true, width: 130 },
+    {
+      headerName: "Packaging",
+      colId: "packaging",
+      // Combine packaging + pack qty so staff see how much a line is, e.g.
+      // "Case ×24". Coke and Fanta both come in "Case" but hold different qtys.
+      valueGetter: (p) => {
+        const pkg = p.data?.packaging_type;
+        const q = p.data?.pack_qty;
+        if (pkg && q) return `${pkg} ×${q}`;
+        if (pkg) return pkg;
+        return q ? `×${q}` : "";
+      },
+      sortable: true,
+      filter: true,
+      width: 150,
+    },
     { headerName: "Capacity", field: "capacity", sortable: true, filter: true, width: 100 },
     {
       headerName: "Current Count",

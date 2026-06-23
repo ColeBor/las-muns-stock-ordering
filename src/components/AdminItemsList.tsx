@@ -20,6 +20,7 @@ type Item = {
   supplier_id: string | null;
   sub_category: string | null;
   packaging_type: string | null;
+  pack_qty: number | null;
   is_serveable: boolean;
   track_factory_stock: boolean;
   cost_per_unit: number | null;
@@ -49,6 +50,7 @@ export default function AdminItemsList({
   const [supplierId, setSupplierId] = useState("");
   const [subCategory, setSubCategory] = useState("");
   const [packagingType, setPackagingType] = useState("");
+  const [packQty, setPackQty] = useState<string>("");
   const [isServeable, setIsServeable] = useState(false);
   const [trackFactoryStock, setTrackFactoryStock] = useState(false);
   const [costPerUnit, setCostPerUnit] = useState<string>("");
@@ -112,6 +114,7 @@ export default function AdminItemsList({
     setSupplierId("");
     setSubCategory("");
     setPackagingType("");
+    setPackQty("");
     setIsServeable(false);
     setTrackFactoryStock(false);
     setCostPerUnit("");
@@ -137,6 +140,16 @@ export default function AdminItemsList({
       setLoading(false);
       return;
     }
+    let packQtyVal: number | null = null;
+    if (packQty.trim() !== "") {
+      const n = parseInt(packQty.trim(), 10);
+      if (!Number.isInteger(n) || n <= 0) {
+        setMessage("Pack quantity must be a whole number above 0 (or blank).");
+        setLoading(false);
+        return;
+      }
+      packQtyVal = n;
+    }
     // Type is derived from supplier: no supplier → we make it
     // (manufactured), supplier picked → external purchase. The DB column
     // is kept in sync so the allocator and other read paths don't change.
@@ -149,6 +162,7 @@ export default function AdminItemsList({
       supplier_id: supplierId === "" || supplierId === PURCHASED_GENERIC ? null : supplierId,
       sub_category: subCategory || null,
       packaging_type: packagingType || null,
+      pack_qty: packQtyVal,
       is_serveable: isServeable,
       // Only meaningful for purchased items; force false for manufactured.
       track_factory_stock: supplierId !== "" && trackFactoryStock,
@@ -197,6 +211,7 @@ export default function AdminItemsList({
     );
     setSubCategory(item.sub_category || "");
     setPackagingType(item.packaging_type || "");
+    setPackQty(item.pack_qty === null ? "" : String(item.pack_qty));
     setIsServeable(!!item.is_serveable);
     setTrackFactoryStock(!!item.track_factory_stock);
     setCostPerUnit(item.cost_per_unit === null ? "" : String(item.cost_per_unit));
@@ -374,7 +389,7 @@ export default function AdminItemsList({
     if (params.newValue === params.oldValue) return;
     const field = params.colDef.field;
     if (!field) return;
-    const allowed = ["sub_category", "packaging_type", "cost_per_unit", "retail_price_per_unit"];
+    const allowed = ["sub_category", "packaging_type", "pack_qty", "cost_per_unit", "retail_price_per_unit"];
     if (!allowed.includes(field)) return;
 
     let normalized: string | number | null = params.newValue as string | number | null;
@@ -385,6 +400,18 @@ export default function AdminItemsList({
         const n = Number(params.newValue);
         if (!Number.isFinite(n) || n < 0) {
           setMessage("Must be a non-negative number.");
+          params.node.setDataValue(field, params.oldValue);
+          return;
+        }
+        normalized = n;
+      }
+    } else if (field === "pack_qty") {
+      if (params.newValue === "" || params.newValue === null || params.newValue === undefined) {
+        normalized = null;
+      } else {
+        const n = Number(params.newValue);
+        if (!Number.isInteger(n) || n <= 0) {
+          setMessage("Pack quantity must be a whole number above 0.");
           params.node.setDataValue(field, params.oldValue);
           return;
         }
@@ -457,6 +484,18 @@ export default function AdminItemsList({
       editable: true,
       cellEditor: "agSelectCellEditor",
       cellEditorParams: { values: ["", ...packagingTypes] },
+    },
+    {
+      headerName: "Pack Qty",
+      field: "pack_qty",
+      sortable: true,
+      filter: true,
+      width: 110,
+      editable: true,
+      cellEditor: "agNumberCellEditor",
+      cellEditorParams: { min: 1, precision: 0 },
+      valueFormatter: (p) =>
+        p.value === null || p.value === undefined || p.value === "" ? "" : `×${p.value}`,
     },
     {
       headerName: "Cost",
@@ -661,6 +700,25 @@ export default function AdminItemsList({
                       <option key={c} value={c}>{c}</option>
                     ))}
                   </select>
+                </div>
+                <div>
+                  <label htmlFor="packqty" className="block text-sm font-medium text-slate-300">
+                    Pack quantity
+                  </label>
+                  <input
+                    id="packqty"
+                    type="number"
+                    step="1"
+                    min="1"
+                    inputMode="numeric"
+                    value={packQty}
+                    onChange={(e) => setPackQty(e.target.value)}
+                    placeholder="units per case/box"
+                    className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    How many units in one package (e.g. a case of 24). Shown on the order sheet.
+                  </p>
                 </div>
                 <div>
                   <label htmlFor="cost" className="block text-sm font-medium text-slate-300">
