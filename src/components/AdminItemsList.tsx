@@ -807,6 +807,9 @@ export default function AdminItemsList({
               columnDefs={columnDefs}
               defaultColDef={{ resizable: true, sortable: true, filter: true }}
               quickFilterText={search}
+              // Match rows by id so a reload/edit updates rows in place and
+              // keeps the scroll position instead of resetting to the top.
+              getRowId={(p) => p.data.id}
               onCellValueChanged={handleCellValueChanged}
               stopEditingWhenCellsLoseFocus
             />
