@@ -35,7 +35,14 @@ export default function Recipes() {
   const load = useCallback(async () => {
     if (!canManage) return;
     const [itemsRes, ingRes, recRes, lineRes] = await Promise.all([
-      supabase.from("items").select("id,name,sub_category").eq("type", "manufactured").order("name"),
+      // Recipes only apply to baked goods — limit the picker to Empanada +
+      // Dessert categories rather than every manufactured item.
+      supabase
+        .from("items")
+        .select("id,name,sub_category")
+        .eq("type", "manufactured")
+        .in("sub_category", ["Empanada", "Dessert"])
+        .order("name"),
       supabase.from("ingredients").select("id,name,unit").order("name"),
       supabase.from("item_recipes").select("item_id,batch_size"),
       supabase.from("recipe_ingredients").select("item_id,ingredient_id,qty_per_batch"),
