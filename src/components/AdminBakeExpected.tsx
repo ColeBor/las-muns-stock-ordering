@@ -179,7 +179,10 @@ export default function AdminBakeExpected() {
         <div>
           <h1 className="text-3xl font-semibold text-white">Bake Count</h1>
           <p className="mt-3 text-slate-400">
-            Set how many of each Empanada we expect to sell per day of the week, per store. The nightly bake form uses this to compute suggestions. Will be replaced by live POS data once that's wired up.
+            Set the bake count for each Empanada per day of the week, per store.
+            The nightly Bake Schedule reads this as that day&apos;s target (its
+            &quot;Expected&quot; column) and subtracts what&apos;s on hand to suggest how
+            much to bake.
           </p>
         </div>
       </div>
