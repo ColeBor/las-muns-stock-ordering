@@ -165,9 +165,17 @@ export default function AdminItemsList({
         return;
       }
 
-      setMessage(editingItem ? "Item updated." : "Item created.");
-      setShowForm(false);
-      resetForm();
+      if (editingItem) {
+        setMessage("Item updated.");
+        setShowForm(false);
+        resetForm();
+      } else {
+        // Rapid entry: keep the form open with every field still filled, clear
+        // only the name, and refocus it for the next item.
+        setMessage("Item created — add the next one.");
+        setName("");
+        setTimeout(() => document.getElementById("name")?.focus(), 0);
+      }
       await reload();
     } catch (err) {
       setMessage(

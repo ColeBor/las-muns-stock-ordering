@@ -3,11 +3,13 @@
 import { useState } from "react";
 import AdminItemsList from "./AdminItemsList";
 import AdminPackagingTypes from "./AdminPackagingTypes";
+import StoreItemMatrix from "./StoreItemMatrix";
 
-type ItemsKind = "items" | "packaging";
+type ItemsKind = "items" | "availability" | "packaging";
 
 const LABELS: Record<ItemsKind, string> = {
   items: "Item List",
+  availability: "Store Availability",
   packaging: "Packaging Types",
 };
 
@@ -35,6 +37,7 @@ export default function AdminItems() {
     <div className="space-y-4">
       <h1 className="text-3xl font-semibold text-white">Items</h1>
       {kind === "items" && <AdminItemsList viewSelector={selector} />}
+      {kind === "availability" && <StoreItemMatrix viewSelector={selector} />}
       {kind === "packaging" && <AdminPackagingTypes viewSelector={selector} />}
     </div>
   );
