@@ -16,6 +16,16 @@ type ExpectedRow = {
   expected_qty: number;
 };
 
+// One suggestion to adjust a (item, weekday) count, from the
+// bake_count_recommendations view. "lower" = repeated 3-day-old waste,
+// "raise" = closing shift repeatedly had to bake extra.
+type Recommendation = {
+  item_id: string;
+  day_of_week: number;
+  direction: "raise" | "lower";
+  occurrences: number;
+};
+
 // Matches JS Date.getDay(): 0=Sun..6=Sat. Display order in the grid is
 // Mon..Sun to match how a store thinks about a week.
 const DAYS: Array<{ value: number; short: string; long: string }> = [
@@ -34,6 +44,7 @@ export default function AdminBakeExpected() {
   const [selectedStoreId, setSelectedStoreId] = useState("");
   const [items, setItems] = useState<BakeItem[]>([]);
   const [rows, setRows] = useState<ExpectedRow[]>([]);
+  const [recs, setRecs] = useState<Recommendation[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -100,18 +111,42 @@ export default function AdminBakeExpected() {
     loadRows();
   }, [loadRows]);
 
+  const loadRecs = useCallback(async () => {
+    if (!selectedStoreId) {
+      setRecs([]);
+      return;
+    }
+    const { data, error } = await supabase
+      .from("bake_count_recommendations")
+      .select("item_id,day_of_week,direction,occurrences")
+      .eq("store_id", selectedStoreId);
+    if (error) {
+      // Non-fatal — the grid just shows without suggestions.
+      setRecs([]);
+      return;
+    }
+    setRecs(((data as Recommendation[]) ?? []).map((r) => ({ ...r, day_of_week: Number(r.day_of_week) })));
+  }, [selectedStoreId]);
+
+  useEffect(() => {
+    loadRecs();
+  }, [loadRecs]);
+
   useRealtimeRefetch(
     selectedStoreId
       ? [
           { table: "bake_expected_sales", filter: `store_id=eq.${selectedStoreId}` },
           { table: "store_items", filter: `store_id=eq.${selectedStoreId}` },
           { table: "items" },
+          { table: "waste_log_entries", filter: `store_id=eq.${selectedStoreId}` },
+          { table: "bake_more_signals", filter: `store_id=eq.${selectedStoreId}` },
         ]
       : [],
     useCallback(() => {
       loadRows();
       loadItems();
-    }, [loadRows, loadItems]),
+      loadRecs();
+    }, [loadRows, loadItems, loadRecs]),
     `admin-bake-expected-${selectedStoreId}`,
   );
 
@@ -122,6 +157,24 @@ export default function AdminBakeExpected() {
     for (const r of rows) map[cellKey(r.item_id, r.day_of_week)] = r.expected_qty;
     return map;
   }, [rows]);
+
+  const recMap = useMemo(() => {
+    const map: Record<string, Recommendation> = {};
+    for (const r of recs) map[cellKey(r.item_id, r.day_of_week)] = r;
+    return map;
+  }, [recs]);
+
+  const itemNameById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const it of items) map[it.item_id] = it.name;
+    return map;
+  }, [items]);
+
+  const dayLongByValue = useMemo(() => {
+    const map: Record<number, string> = {};
+    for (const d of DAYS) map[d.value] = d.long;
+    return map;
+  }, []);
 
   const handleCellSave = async (item_id: string, day_of_week: number) => {
     if (!selectedStoreId) return;
@@ -218,6 +271,40 @@ export default function AdminBakeExpected() {
 
           {message && <p className="text-sm text-cyan-300">{message}</p>}
 
+          {selectedStoreId && recs.length > 0 && (
+            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
+              <h3 className="text-sm font-semibold text-amber-200">Suggestions to adjust</h3>
+              <p className="mt-1 text-xs text-slate-400">
+                Based on the last 4 weeks of 3-day-old waste and closing-shift &quot;had to bake
+                extra&quot; notes. Marked on the matching cells below.
+              </p>
+              <ul className="mt-3 space-y-1 text-sm text-slate-200">
+                {recs
+                  .slice()
+                  .sort(
+                    (a, b) =>
+                      a.day_of_week - b.day_of_week ||
+                      (itemNameById[a.item_id] ?? "").localeCompare(itemNameById[b.item_id] ?? ""),
+                  )
+                  .map((r) => (
+                    <li key={`${r.item_id}-${r.day_of_week}-${r.direction}`} className="flex items-start gap-2">
+                      <span className={r.direction === "lower" ? "text-rose-300" : "text-cyan-300"}>
+                        {r.direction === "lower" ? "▼" : "▲"}
+                      </span>
+                      <span>
+                        <strong>{itemNameById[r.item_id] ?? "Item"}</strong> on{" "}
+                        <strong>{dayLongByValue[r.day_of_week] ?? "?"}s</strong>:{" "}
+                        {r.direction === "lower" ? "consider lowering" : "consider raising"} —{" "}
+                        {r.direction === "lower"
+                          ? `${r.occurrences}× wasted 3-day-old`
+                          : `ran short ${r.occurrences}×`}
+                      </span>
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          )}
+
           {!selectedStoreId ? (
             <p className="text-sm text-slate-400">Pick a store to edit its expected sales.</p>
           ) : items.length === 0 ? (
@@ -247,30 +334,51 @@ export default function AdminBakeExpected() {
                         const draft = drafts[key];
                         const displayValue = draft ?? String(persisted);
                         const saving = savingKey === key;
+                        const rec = recMap[key];
                         return (
                           <td key={d.value} className="px-2 py-1 text-center">
-                            <input
-                              type="number"
-                              min="0"
-                              step="1"
-                              inputMode="numeric"
-                              value={displayValue}
-                              onChange={(e) =>
-                                setDrafts((prev) => ({ ...prev, [key]: e.target.value }))
-                              }
-                              onBlur={() => handleCellSave(item.item_id, d.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  (e.target as HTMLInputElement).blur();
+                            <div className="relative inline-block">
+                              <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                inputMode="numeric"
+                                value={displayValue}
+                                onChange={(e) =>
+                                  setDrafts((prev) => ({ ...prev, [key]: e.target.value }))
                                 }
-                              }}
-                              disabled={saving}
-                              className={`w-16 rounded border bg-slate-950 px-2 py-1 text-center text-sm text-white outline-none ${
-                                draft !== undefined
-                                  ? "border-cyan-400"
-                                  : "border-slate-700"
-                              }`}
-                            />
+                                onBlur={() => handleCellSave(item.item_id, d.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    (e.target as HTMLInputElement).blur();
+                                  }
+                                }}
+                                disabled={saving}
+                                className={`w-16 rounded border bg-slate-950 px-2 py-1 text-center text-sm text-white outline-none ${
+                                  draft !== undefined
+                                    ? "border-cyan-400"
+                                    : rec
+                                      ? rec.direction === "lower"
+                                        ? "border-rose-400/60"
+                                        : "border-cyan-400/60"
+                                      : "border-slate-700"
+                                }`}
+                              />
+                              {rec && (
+                                <span
+                                  className={`pointer-events-none absolute -top-1.5 -right-1.5 text-xs ${
+                                    rec.direction === "lower" ? "text-rose-300" : "text-cyan-300"
+                                  }`}
+                                  title={
+                                    rec.direction === "lower"
+                                      ? `Consider lowering — ${rec.occurrences}× wasted 3-day-old in the last 4 weeks`
+                                      : `Consider raising — ran short ${rec.occurrences}× in the last 4 weeks`
+                                  }
+                                >
+                                  {rec.direction === "lower" ? "▼" : "▲"}
+                                </span>
+                              )}
+                            </div>
                           </td>
                         );
                       })}

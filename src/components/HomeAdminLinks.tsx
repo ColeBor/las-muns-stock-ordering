@@ -19,6 +19,7 @@ export default function HomeAdminLinks() {
   const [alertCount, setAlertCount] = useState(0);
   const [requestsAlertCount, setRequestsAlertCount] = useState(0);
   const [wasteAlertCount, setWasteAlertCount] = useState(0);
+  const [bakeRecCount, setBakeRecCount] = useState(0);
 
   useEffect(() => {
     const cached = localStorage.getItem(ROLE_CACHE_KEY);
@@ -170,6 +171,35 @@ export default function HomeAdminLinks() {
     `home-waste-alert-badge`,
   );
 
+  // Bake-count suggestions: count rows in the recommendations view (over/under
+  // baking patterns across all stores). Manager-only.
+  const loadBakeRecCount = useCallback(async () => {
+    if (!isStoreManager) {
+      setBakeRecCount(0);
+      return;
+    }
+    const { count, error } = await supabase
+      .from("bake_count_recommendations")
+      .select("item_id", { count: "exact", head: true });
+    if (error) {
+      setBakeRecCount(0);
+      return;
+    }
+    setBakeRecCount(count ?? 0);
+  }, [isStoreManager]);
+
+  useEffect(() => {
+    loadBakeRecCount();
+  }, [loadBakeRecCount]);
+
+  useRealtimeRefetch(
+    isStoreManager
+      ? [{ table: "waste_log_entries" }, { table: "bake_more_signals" }]
+      : [],
+    loadBakeRecCount,
+    `home-bake-rec-badge`,
+  );
+
   if (!isStoreManager) return null;
 
   return (
@@ -239,7 +269,21 @@ export default function HomeAdminLinks() {
       <AdminSection title="Configuration">
         <AdminLink href="/admin/directory">Directory</AdminLink>
         <AdminLink href="/admin/items">Items</AdminLink>
-        <AdminLink href="/admin/bake-expected">Bake Count</AdminLink>
+        <AdminLink
+          href="/admin/bake-expected"
+          alertBadge={
+            bakeRecCount > 0 ? (
+              <span
+                className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-amber-400 px-1.5 text-xs font-bold text-slate-950"
+                aria-label={`${bakeRecCount} bake-count suggestion${bakeRecCount === 1 ? "" : "s"}`}
+              >
+                {bakeRecCount}
+              </span>
+            ) : null
+          }
+        >
+          Bake Count
+        </AdminLink>
         <AdminLink href="/admin/training">Training Resources</AdminLink>
         <AdminLink href="/admin/announcements">Announcements</AdminLink>
       </AdminSection>
