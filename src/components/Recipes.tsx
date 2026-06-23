@@ -9,6 +9,8 @@ const EMPANADAS_PER_BOX = 30;
 
 type Item = { id: string; name: string; sub_category: string | null };
 type Ingredient = { id: string; name: string; unit: string };
+// Recipes are per BOX. The DB column is still named qty_per_batch and each
+// recipe's item_recipes.batch_size is fixed at 1, so "per batch" == "per box".
 type RecipeLine = { item_id: string; ingredient_id: string; qty_per_batch: number };
 
 export default function Recipes() {
@@ -18,13 +20,11 @@ export default function Recipes() {
 
   const [items, setItems] = useState<Item[]>([]);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
-  const [batchByItem, setBatchByItem] = useState<Record<string, number>>({});
+  const [hasHeaderByItem, setHasHeaderByItem] = useState<Record<string, boolean>>({});
   const [linesByItem, setLinesByItem] = useState<Record<string, RecipeLine[]>>({});
   const [message, setMessage] = useState<string | null>(null);
 
   const [selectedItemId, setSelectedItemId] = useState("");
-  const [batchDraft, setBatchDraft] = useState("");
-  const [savingBatch, setSavingBatch] = useState(false);
 
   const [newIngredientId, setNewIngredientId] = useState("");
   const [newQty, setNewQty] = useState("");
@@ -44,17 +44,15 @@ export default function Recipes() {
         .in("sub_category", ["Empanada", "Dessert"])
         .order("name"),
       supabase.from("ingredients").select("id,name,unit").order("name"),
-      supabase.from("item_recipes").select("item_id,batch_size"),
+      supabase.from("item_recipes").select("item_id"),
       supabase.from("recipe_ingredients").select("item_id,ingredient_id,qty_per_batch"),
     ]);
     if (itemsRes.data) setItems(itemsRes.data as Item[]);
     if (ingRes.data) setIngredients(ingRes.data as Ingredient[]);
     if (recRes.data) {
-      const m: Record<string, number> = {};
-      for (const r of recRes.data as Array<{ item_id: string; batch_size: number }>) {
-        m[r.item_id] = Number(r.batch_size);
-      }
-      setBatchByItem(m);
+      const m: Record<string, boolean> = {};
+      for (const r of recRes.data as Array<{ item_id: string }>) m[r.item_id] = true;
+      setHasHeaderByItem(m);
     }
     if (lineRes.data) {
       const m: Record<string, RecipeLine[]> = {};
@@ -82,71 +80,41 @@ export default function Recipes() {
     "recipes",
   );
 
-  // Keep the batch draft in sync with the selected item.
-  useEffect(() => {
-    if (!selectedItemId) {
-      setBatchDraft("");
-      return;
-    }
-    const b = batchByItem[selectedItemId];
-    setBatchDraft(b === undefined ? "" : String(b));
-  }, [selectedItemId, batchByItem]);
-
   const ingredientById = useMemo(() => {
     const m: Record<string, Ingredient> = {};
     for (const i of ingredients) m[i.id] = i;
     return m;
   }, [ingredients]);
 
-  const hasRecipe = selectedItemId !== "" && batchByItem[selectedItemId] !== undefined;
   const lines = selectedItemId ? linesByItem[selectedItemId] ?? [] : [];
   const usedIngredientIds = new Set(lines.map((l) => l.ingredient_id));
   const availableIngredients = ingredients.filter((i) => !usedIngredientIds.has(i.id));
-  const batchSize = selectedItemId ? batchByItem[selectedItemId] : undefined;
-
-  const handleSaveBatch = async () => {
-    if (!selectedItemId) return;
-    const size = parseInt(batchDraft, 10);
-    if (!Number.isInteger(size) || size <= 0) {
-      setMessage("Batch size must be a whole number of boxes greater than 0.");
-      return;
-    }
-    setSavingBatch(true);
-    setMessage(null);
-    try {
-      const { error } = await supabase
-        .from("item_recipes")
-        .upsert([{ item_id: selectedItemId, batch_size: size }], { onConflict: "item_id" });
-      if (error) {
-        setMessage(error.message);
-        return;
-      }
-      setMessage("Batch size saved.");
-      load();
-    } catch (err) {
-      setMessage(err instanceof Error ? `Couldn't save: ${err.message}` : "Couldn't save (network timeout). Try again.");
-    } finally {
-      setSavingBatch(false);
-    }
-  };
 
   const handleAddLine = async () => {
-    if (!selectedItemId || !hasRecipe) {
-      setMessage("Set a batch size first.");
-      return;
-    }
+    if (!selectedItemId) return;
     if (!newIngredientId) {
       setMessage("Pick an ingredient.");
       return;
     }
     const qty = Number(newQty);
     if (!Number.isFinite(qty) || qty < 0) {
-      setMessage("Amount per batch must be a non-negative number.");
+      setMessage("Amount per box must be a non-negative number.");
       return;
     }
     setAddingLine(true);
     setMessage(null);
     try {
+      // Lazily create the recipe header (1 box per "batch") the first time an
+      // ingredient is added — no separate batch-size step.
+      if (!hasHeaderByItem[selectedItemId]) {
+        const { error: hdrErr } = await supabase
+          .from("item_recipes")
+          .upsert([{ item_id: selectedItemId, batch_size: 1 }], { onConflict: "item_id" });
+        if (hdrErr) {
+          setMessage(hdrErr.message);
+          return;
+        }
+      }
       const { error } = await supabase
         .from("recipe_ingredients")
         .insert([{ item_id: selectedItemId, ingredient_id: newIngredientId, qty_per_batch: qty }]);
@@ -226,9 +194,9 @@ export default function Recipes() {
     <section className="rounded-3xl border border-white/10 bg-slate-950/90 p-8 text-slate-100 shadow-lg shadow-slate-950/20">
       <h1 className="text-3xl font-semibold text-white">Recipes</h1>
       <p className="mt-3 text-slate-400">
-        For each item, set how many <strong>boxes</strong> one batch makes and the
-        ingredients a batch uses. The bake schedule uses this to build the grocery
-        list and deduct ingredients. (1 box = {EMPANADAS_PER_BOX} empanadas.)
+        For each item, list the ingredients <strong>one box</strong> uses. The bake
+        schedule multiplies this by the boxes to bake to build the grocery list and
+        deduct ingredients. (1 box = {EMPANADAS_PER_BOX} empanadas.)
       </p>
 
       {authLoading ? (
@@ -255,7 +223,7 @@ export default function Recipes() {
               {items.map((it) => (
                 <option key={it.id} value={it.id}>
                   {it.name}
-                  {batchByItem[it.id] !== undefined ? " ✓" : ""}
+                  {(linesByItem[it.id]?.length ?? 0) > 0 ? " ✓" : ""}
                 </option>
               ))}
             </select>
@@ -264,153 +232,111 @@ export default function Recipes() {
           {message && <p className="text-sm text-cyan-300">{message}</p>}
 
           {selectedItemId && (
-            <div className="space-y-5">
-              {/* Batch size */}
-              <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-5">
-                <h2 className="text-lg font-semibold text-white">Batch size</h2>
-                <div className="mt-3 flex flex-wrap items-end gap-3">
-                  <label className="flex flex-col gap-1 text-xs text-slate-400">
-                    Boxes per batch
-                    <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={batchDraft}
-                      onChange={(e) => setBatchDraft(e.target.value)}
-                      placeholder="e.g. 10"
-                      className={`${inputClass} w-32`}
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleSaveBatch}
-                    disabled={savingBatch || !batchDraft.trim()}
-                    className="rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:opacity-50"
-                  >
-                    {savingBatch ? "Saving…" : "Save"}
-                  </button>
-                  {batchSize !== undefined && (
-                    <span className="text-xs text-slate-500">
-                      1 batch = {batchSize} box{batchSize === 1 ? "" : "es"} ={" "}
-                      {batchSize * EMPANADAS_PER_BOX} empanadas
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Ingredients */}
-              <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-5">
-                <h2 className="text-lg font-semibold text-white">Ingredients per batch</h2>
-                {!hasRecipe ? (
-                  <p className="mt-2 text-sm text-amber-300">Set a batch size above first.</p>
-                ) : (
-                  <>
-                    {lines.length === 0 ? (
-                      <p className="mt-2 text-sm text-slate-500">No ingredients yet.</p>
-                    ) : (
-                      <div className="mt-3 overflow-x-auto">
-                        <table className="min-w-full text-sm">
-                          <thead>
-                            <tr className="text-left text-xs uppercase tracking-wider text-slate-400">
-                              <th className="px-3 py-2">Ingredient</th>
-                              <th className="px-3 py-2">Per batch</th>
-                              <th className="px-3 py-2">Unit</th>
-                              <th className="px-3 py-2"></th>
+            <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-5">
+              <h2 className="text-lg font-semibold text-white">Ingredients per box</h2>
+              {lines.length === 0 ? (
+                <p className="mt-2 text-sm text-slate-500">No ingredients yet.</p>
+              ) : (
+                <div className="mt-3 overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-xs uppercase tracking-wider text-slate-400">
+                        <th className="px-3 py-2">Ingredient</th>
+                        <th className="px-3 py-2">Per box</th>
+                        <th className="px-3 py-2">Unit</th>
+                        <th className="px-3 py-2"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {lines
+                        .slice()
+                        .sort((a, b) =>
+                          (ingredientById[a.ingredient_id]?.name ?? "").localeCompare(
+                            ingredientById[b.ingredient_id]?.name ?? "",
+                          ),
+                        )
+                        .map((line) => {
+                          const ing = ingredientById[line.ingredient_id];
+                          const draft = lineQtyDrafts[line.ingredient_id];
+                          return (
+                            <tr key={line.ingredient_id} className="text-slate-200">
+                              <td className="px-3 py-2 font-medium">{ing?.name ?? line.ingredient_id}</td>
+                              <td className="px-3 py-2">
+                                <input
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  value={draft ?? String(line.qty_per_batch)}
+                                  onChange={(e) =>
+                                    setLineQtyDrafts((p) => ({ ...p, [line.ingredient_id]: e.target.value }))
+                                  }
+                                  onBlur={() => handleSaveLineQty(line)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                                  }}
+                                  disabled={savingLineId === line.ingredient_id}
+                                  className={`${inputClass} w-28`}
+                                />
+                              </td>
+                              <td className="px-3 py-2 text-slate-400">{ing?.unit ?? ""}</td>
+                              <td className="px-3 py-2 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveLine(line)}
+                                  className="text-xs text-rose-300 hover:text-rose-200"
+                                >
+                                  Remove
+                                </button>
+                              </td>
                             </tr>
-                          </thead>
-                          <tbody className="divide-y divide-white/5">
-                            {lines
-                              .slice()
-                              .sort((a, b) =>
-                                (ingredientById[a.ingredient_id]?.name ?? "").localeCompare(
-                                  ingredientById[b.ingredient_id]?.name ?? "",
-                                ),
-                              )
-                              .map((line) => {
-                                const ing = ingredientById[line.ingredient_id];
-                                const draft = lineQtyDrafts[line.ingredient_id];
-                                return (
-                                  <tr key={line.ingredient_id} className="text-slate-200">
-                                    <td className="px-3 py-2 font-medium">{ing?.name ?? line.ingredient_id}</td>
-                                    <td className="px-3 py-2">
-                                      <input
-                                        type="number"
-                                        step="any"
-                                        min="0"
-                                        value={draft ?? String(line.qty_per_batch)}
-                                        onChange={(e) =>
-                                          setLineQtyDrafts((p) => ({ ...p, [line.ingredient_id]: e.target.value }))
-                                        }
-                                        onBlur={() => handleSaveLineQty(line)}
-                                        onKeyDown={(e) => {
-                                          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                                        }}
-                                        disabled={savingLineId === line.ingredient_id}
-                                        className={`${inputClass} w-28`}
-                                      />
-                                    </td>
-                                    <td className="px-3 py-2 text-slate-400">{ing?.unit ?? ""}</td>
-                                    <td className="px-3 py-2 text-right">
-                                      <button
-                                        type="button"
-                                        onClick={() => handleRemoveLine(line)}
-                                        className="text-xs text-rose-300 hover:text-rose-200"
-                                      >
-                                        Remove
-                                      </button>
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
-                    {/* Add line */}
-                    <div className="mt-4 flex flex-wrap items-end gap-3">
-                      <label className="flex flex-col gap-1 text-xs text-slate-400">
-                        Ingredient
-                        <select
-                          value={newIngredientId}
-                          onChange={(e) => setNewIngredientId(e.target.value)}
-                          className={`${inputClass} min-w-[180px]`}
-                        >
-                          <option value="">(pick ingredient)</option>
-                          {availableIngredients.map((i) => (
-                            <option key={i.id} value={i.id}>
-                              {i.name} ({i.unit})
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="flex flex-col gap-1 text-xs text-slate-400">
-                        Amount per batch
-                        <input
-                          type="number"
-                          step="any"
-                          min="0"
-                          value={newQty}
-                          onChange={(e) => setNewQty(e.target.value)}
-                          placeholder="0"
-                          className={`${inputClass} w-28`}
-                        />
-                      </label>
-                      <button
-                        type="button"
-                        onClick={handleAddLine}
-                        disabled={addingLine || !newIngredientId || newQty.trim() === ""}
-                        className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:opacity-50"
-                      >
-                        {addingLine ? "Adding…" : "Add ingredient"}
-                      </button>
-                      {availableIngredients.length === 0 && ingredients.length === 0 && (
-                        <span className="text-xs text-slate-500">
-                          No ingredients yet — add some on the Ingredients page.
-                        </span>
-                      )}
-                    </div>
-                  </>
+              {/* Add line */}
+              <div className="mt-4 flex flex-wrap items-end gap-3">
+                <label className="flex flex-col gap-1 text-xs text-slate-400">
+                  Ingredient
+                  <select
+                    value={newIngredientId}
+                    onChange={(e) => setNewIngredientId(e.target.value)}
+                    className={`${inputClass} min-w-[180px]`}
+                  >
+                    <option value="">(pick ingredient)</option>
+                    {availableIngredients.map((i) => (
+                      <option key={i.id} value={i.id}>
+                        {i.name} ({i.unit})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-slate-400">
+                  Amount per box
+                  <input
+                    type="number"
+                    step="any"
+                    min="0"
+                    value={newQty}
+                    onChange={(e) => setNewQty(e.target.value)}
+                    placeholder="0"
+                    className={`${inputClass} w-28`}
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={handleAddLine}
+                  disabled={addingLine || !newIngredientId || newQty.trim() === ""}
+                  className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:opacity-50"
+                >
+                  {addingLine ? "Adding…" : "Add ingredient"}
+                </button>
+                {availableIngredients.length === 0 && ingredients.length === 0 && (
+                  <span className="text-xs text-slate-500">
+                    No ingredients yet — add some on the Ingredients page.
+                  </span>
                 )}
               </div>
             </div>
