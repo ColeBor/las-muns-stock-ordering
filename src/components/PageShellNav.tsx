@@ -58,9 +58,10 @@ const ADMIN_LINKS: Array<{ href: string; label: string }> = [
   { href: "/admin/announcements", label: "Announcements" },
 ];
 
-// Factory Workers only ever go one place.
+// Factory Workers' link set.
 const FACTORY_LINKS: Array<{ href: string; label: string }> = [
   { href: "/factory-stock", label: "Factory Stock" },
+  { href: "/ingredients", label: "Ingredients" },
 ];
 
 export default function PageShellNav() {
