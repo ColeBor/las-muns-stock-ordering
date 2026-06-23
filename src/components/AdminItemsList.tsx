@@ -29,6 +29,10 @@ type Item = {
 
 const SUB_CATEGORIES = ["Empanada", "Dessert", "Drink", "Cleaning Supplies", "General Supplies", "Sauce"];
 
+// Source dropdown sentinel: Purchased but with no specific supplier. "" =
+// Manufactured; a real supplier id = Purchased from that supplier.
+const PURCHASED_GENERIC = "__purchased__";
+
 export default function AdminItemsList({
   viewSelector,
 }: {
@@ -134,8 +138,11 @@ export default function AdminItemsList({
     // is kept in sync so the allocator and other read paths don't change.
     const payload = {
       name: name.trim(),
-      type: supplierId ? "purchased" : "manufactured",
-      supplier_id: supplierId || null,
+      // "" = Manufactured (we make it; has a factory on-hand amount).
+      // PURCHASED_GENERIC = Purchased with no supplier. A real id = Purchased
+      // from that supplier. Purchased (either form) is unlimited supply.
+      type: supplierId === "" ? "manufactured" : "purchased",
+      supplier_id: supplierId === "" || supplierId === PURCHASED_GENERIC ? null : supplierId,
       sub_category: subCategory || null,
       packaging_type: packagingType || null,
       is_serveable: isServeable,
@@ -171,7 +178,9 @@ export default function AdminItemsList({
   const handleEdit = (item: Item) => {
     setEditingItem(item);
     setName(item.name);
-    setSupplierId(item.supplier_id || "");
+    setSupplierId(
+      item.type === "manufactured" ? "" : item.supplier_id || PURCHASED_GENERIC,
+    );
     setSubCategory(item.sub_category || "");
     setPackagingType(item.packaging_type || "");
     setIsServeable(!!item.is_serveable);
@@ -402,7 +411,8 @@ export default function AdminItemsList({
       // Empty supplier means we make it ourselves. The allocator routes
       // these through factory_inventory; everything else goes through POs.
       valueGetter: (params) =>
-        params.data?.suppliers?.name ?? (params.data ? "Manufactured" : ""),
+        params.data?.suppliers?.name ??
+        (params.data ? (params.data.type === "manufactured" ? "Manufactured" : "Purchased") : ""),
       sortable: true,
       filter: true,
       flex: 1,
@@ -569,7 +579,7 @@ export default function AdminItemsList({
                 </div>
                 <div>
                   <label htmlFor="supplier" className="block text-sm font-medium text-slate-300">
-                    Supplier
+                    Source
                   </label>
                   <select
                     id="supplier"
@@ -577,14 +587,16 @@ export default function AdminItemsList({
                     onChange={(e) => setSupplierId(e.target.value)}
                     className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
                   >
-                    <option value="">Manufactured</option>
+                    <option value="">Manufactured (we make it)</option>
+                    <option value={PURCHASED_GENERIC}>Purchased — no specific supplier</option>
                     {suppliers.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
+                      <option key={s.id} value={s.id}>Purchased — {s.name}</option>
                     ))}
                   </select>
                   <p className="mt-1 text-xs text-slate-500">
-                    Pick a supplier to mark this as purchased. Leave on
-                    &quot;Manufactured&quot; for in-house items.
+                    Manufactured = baked in-house (has a factory on-hand amount).
+                    Purchased = unlimited supply; pick a specific supplier, or
+                    &quot;Purchased — no specific supplier&quot; for a generic one.
                   </p>
                 </div>
                 <div>
