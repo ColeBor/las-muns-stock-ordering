@@ -1,6 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+// Photos here are blob previews (camera capture) and short-lived private signed
+// URLs — next/image can't optimise either, so plain <img> is correct.
+/* eslint-disable @next/next/no-img-element */
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
@@ -89,6 +93,19 @@ export default function WasteLog() {
   const [quantity, setQuantity] = useState<string>("1");
   const [reason, setReason] = useState<string>("");
   const [reasonOther, setReasonOther] = useState<string>("");
+
+  // Photos: staged client-side until the entry is saved, then uploaded. The
+  // camera button opens the device camera on phones (capture="environment").
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [stagedPhotos, setStagedPhotos] = useState<Array<{ file: File; url: string }>>([]);
+  const [uploadingPhotos, setUploadingPhotos] = useState(false);
+  // Signed thumbnail URLs for the recent-waste table, keyed by entry id.
+  const [photosByEntry, setPhotosByEntry] = useState<Record<string, Array<{ id: string; url: string }>>>({});
+
+  // Opportunistically purge photos past their 3-day expiry on page load.
+  useEffect(() => {
+    fetch("/api/waste-photos/cleanup", { method: "POST" }).catch(() => {});
+  }, []);
 
   const hasAssignedStore = useMemo(() => !!profile?.store_id, [profile]);
   const effectiveStoreId = useMemo(
@@ -187,10 +204,45 @@ export default function WasteLog() {
     loadEntries();
   }, [loadEntries]);
 
+  // Non-expired photos for the recent entries, with short-lived signed URLs
+  // (the bucket is private). Keyed by entry id for the table to render.
+  const loadPhotos = useCallback(async () => {
+    if (!effectiveStoreId) {
+      setPhotosByEntry({});
+      return;
+    }
+    const { data, error } = await supabase
+      .from("waste_log_photos")
+      .select("id,waste_log_id,storage_path")
+      .eq("store_id", effectiveStoreId)
+      .gt("expires_at", new Date().toISOString());
+    if (error || !data || data.length === 0) {
+      setPhotosByEntry({});
+      return;
+    }
+    const paths = data.map((p) => p.storage_path as string);
+    const { data: signed } = await supabase.storage
+      .from("waste-photos")
+      .createSignedUrls(paths, 3600);
+    const urlByPath = new Map((signed ?? []).map((s) => [s.path, s.signedUrl]));
+    const byEntry: Record<string, Array<{ id: string; url: string }>> = {};
+    for (const p of data as Array<{ id: string; waste_log_id: string; storage_path: string }>) {
+      const url = urlByPath.get(p.storage_path);
+      if (!url) continue;
+      (byEntry[p.waste_log_id] ??= []).push({ id: p.id, url });
+    }
+    setPhotosByEntry(byEntry);
+  }, [effectiveStoreId]);
+
+  useEffect(() => {
+    loadPhotos();
+  }, [loadPhotos]);
+
   useRealtimeRefetch(
     effectiveStoreId
       ? [
           { table: "waste_log_entries", filter: `store_id=eq.${effectiveStoreId}` },
+          { table: "waste_log_photos", filter: `store_id=eq.${effectiveStoreId}` },
           { table: "store_items", filter: `store_id=eq.${effectiveStoreId}` },
           { table: "items" },
         ]
@@ -198,9 +250,37 @@ export default function WasteLog() {
     useCallback(() => {
       loadEntries();
       loadItems();
-    }, [loadEntries, loadItems]),
+      loadPhotos();
+    }, [loadEntries, loadItems, loadPhotos]),
     `waste-log-${effectiveStoreId}`,
   );
+
+  const MAX_PHOTO_BYTES = 10 * 1024 * 1024; // 10 MB
+
+  const onPickPhotos = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    const valid: Array<{ file: File; url: string }> = [];
+    for (const f of files) {
+      if (!f.type.startsWith("image/")) continue;
+      if (f.size > MAX_PHOTO_BYTES) {
+        setMessage(`"${f.name}" is too large (max 10 MB).`);
+        continue;
+      }
+      valid.push({ file: f, url: URL.createObjectURL(f) });
+    }
+    if (valid.length) setStagedPhotos((prev) => [...prev, ...valid]);
+    // Reset so taking another photo (or re-picking the same file) fires onChange.
+    e.target.value = "";
+  };
+
+  const removeStagedPhoto = (idx: number) => {
+    setStagedPhotos((prev) => {
+      const next = [...prev];
+      URL.revokeObjectURL(next[idx].url);
+      next.splice(idx, 1);
+      return next;
+    });
+  };
 
   const itemNameById = useMemo(() => {
     const map: Record<string, string> = {};
@@ -252,14 +332,56 @@ export default function WasteLog() {
       recorded_by: session?.user?.email ?? session?.user?.id ?? null,
     };
     try {
-      const { error } = await supabase.from("waste_log_entries").insert([payload]);
+      const { data: inserted, error } = await supabase
+        .from("waste_log_entries")
+        .insert([payload])
+        .select("id")
+        .single();
       if (error) {
         setMessage(error.message);
         return;
       }
-      setMessage("Waste logged.");
+
+      // Upload any staged photos against the new entry. Path:
+      // {store_id}/{waste_log_id}/{uuid}.{ext} — the leading store id scopes
+      // worker storage access. A failed upload is reported but doesn't lose
+      // the logged entry.
+      let uploaded = 0;
+      if (inserted?.id && stagedPhotos.length > 0) {
+        setUploadingPhotos(true);
+        for (const sp of stagedPhotos) {
+          const ext =
+            (sp.file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+          const path = `${effectiveStoreId}/${inserted.id}/${crypto.randomUUID()}.${ext}`;
+          const { error: upErr } = await supabase.storage
+            .from("waste-photos")
+            .upload(path, sp.file, { contentType: sp.file.type || undefined, upsert: false });
+          if (upErr) {
+            setMessage(`Photo upload failed: ${upErr.message}`);
+            continue;
+          }
+          const { error: rowErr } = await supabase.from("waste_log_photos").insert({
+            waste_log_id: inserted.id,
+            store_id: effectiveStoreId,
+            storage_path: path,
+          });
+          if (rowErr) {
+            // Roll back the orphaned file so it isn't left without a row.
+            await supabase.storage.from("waste-photos").remove([path]);
+            setMessage(`Photo save failed: ${rowErr.message}`);
+            continue;
+          }
+          uploaded += 1;
+        }
+        setUploadingPhotos(false);
+      }
+
+      stagedPhotos.forEach((p) => URL.revokeObjectURL(p.url));
+      setStagedPhotos([]);
+      setMessage(uploaded > 0 ? `Waste logged with ${uploaded} photo${uploaded === 1 ? "" : "s"}.` : "Waste logged.");
       resetForm();
       loadEntries();
+      loadPhotos();
     } catch (err) {
       setMessage(
         err instanceof Error
@@ -268,6 +390,7 @@ export default function WasteLog() {
       );
     } finally {
       setSaving(false);
+      setUploadingPhotos(false);
     }
   };
 
@@ -490,6 +613,49 @@ export default function WasteLog() {
                         />
                       </div>
                     )}
+                    <div>
+                      <label className="block text-sm font-medium text-slate-300">
+                        Photos <span className="text-xs text-slate-500">(optional)</span>
+                      </label>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        multiple
+                        onChange={onPickPhotos}
+                        className="hidden"
+                      />
+                      <div className="mt-1 flex flex-wrap items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-cyan-300 transition hover:border-cyan-400"
+                        >
+                          📷 Take photo
+                        </button>
+                        {stagedPhotos.map((p, idx) => (
+                          <div key={idx} className="relative">
+                            <img
+                              src={p.url}
+                              alt={`Staged waste photo ${idx + 1}`}
+                              className="h-16 w-16 rounded-lg object-cover ring-1 ring-white/10"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removeStagedPhoto(idx)}
+                              aria-label="Remove photo"
+                              className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-xs font-bold text-white"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Opens the camera on phones. Photos are deleted automatically after 3 days.
+                      </p>
+                    </div>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
@@ -497,7 +663,11 @@ export default function WasteLog() {
                         disabled={saving}
                         className="rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:opacity-50"
                       >
-                        {saving ? "Saving..." : "Log waste"}
+                        {uploadingPhotos
+                          ? "Uploading photos..."
+                          : saving
+                            ? "Saving..."
+                            : "Log waste"}
                       </button>
                     </div>
                   </>
@@ -519,6 +689,7 @@ export default function WasteLog() {
                           <th className="px-3 py-2">Qty</th>
                           <th className="px-3 py-2">Reason</th>
                           <th className="px-3 py-2">By</th>
+                          <th className="px-3 py-2">Photos</th>
                           <th className="px-3 py-2"></th>
                         </tr>
                       </thead>
@@ -530,6 +701,19 @@ export default function WasteLog() {
                             <td className="px-3 py-2">{entry.quantity}</td>
                             <td className="px-3 py-2">{displayReason(entry)}</td>
                             <td className="px-3 py-2 text-slate-400">{entry.recorded_by ?? "—"}</td>
+                            <td className="px-3 py-2">
+                              <div className="flex gap-1">
+                                {(photosByEntry[entry.id] ?? []).map((ph) => (
+                                  <a key={ph.id} href={ph.url} target="_blank" rel="noopener noreferrer">
+                                    <img
+                                      src={ph.url}
+                                      alt="Waste photo"
+                                      className="h-10 w-10 rounded object-cover ring-1 ring-white/10 transition hover:ring-cyan-400"
+                                    />
+                                  </a>
+                                ))}
+                              </div>
+                            </td>
                             <td className="px-3 py-2 text-right">
                               <button
                                 type="button"
