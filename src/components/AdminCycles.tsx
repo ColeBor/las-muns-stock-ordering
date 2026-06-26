@@ -953,8 +953,30 @@ type PreviewRow = {
 
 function PreviewTab({ cycleId }: { cycleId: string }) {
   const [rows, setRows] = useState<PreviewRow[]>([]);
+  // Categories to include in the PDF export. null = all (the default); once
+  // the admin unticks one it becomes an explicit set.
+  const [exportCats, setExportCats] = useState<Set<string> | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [cycleDate, setCycleDate] = useState<string | null>(null);
   // Drop stale responses so racing realtime events can't clobber state.
   const loadTokenRef = useRef(0);
+
+  // Cycle's order date, for the PDF title/filename. Cheap standalone fetch so
+  // it doesn't tangle with the demand load's strict all-or-nothing guard.
+  useEffect(() => {
+    let active = true;
+    supabase
+      .from("order_cycles")
+      .select("order_date")
+      .eq("id", cycleId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (active) setCycleDate((data as { order_date: string | null } | null)?.order_date ?? null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [cycleId]);
 
   const load = useCallback(async () => {
     const myToken = ++loadTokenRef.current;
@@ -1165,6 +1187,81 @@ function PreviewTab({ cycleId }: { cycleId: string }) {
     return { demand, shortfall, itemsShort };
   }, [rows]);
 
+  // Distinct categories present in the current preview, for the export picker.
+  const categories = useMemo(
+    () =>
+      Array.from(
+        new Set(rows.map((r) => r.sub_category).filter((c): c is string => !!c)),
+      ).sort((a, b) => a.localeCompare(b)),
+    [rows],
+  );
+
+  const isCatPicked = (c: string) => exportCats === null || exportCats.has(c);
+  const toggleCat = (c: string) =>
+    setExportCats((prev) => {
+      const base = prev === null ? new Set(categories) : new Set(prev);
+      if (base.has(c)) base.delete(c);
+      else base.add(c);
+      return base;
+    });
+
+  const pickedCategories = exportCats === null ? categories : categories.filter((c) => exportCats.has(c));
+
+  const exportPdf = async () => {
+    const picked = new Set(pickedCategories);
+    const selected = rows.filter((r) => r.sub_category && picked.has(r.sub_category));
+    if (selected.length === 0) return;
+    setExporting(true);
+    try {
+      const [{ jsPDF }, autoTableMod] = await Promise.all([
+        import("jspdf"),
+        import("jspdf-autotable"),
+      ]);
+      const autoTable = autoTableMod.default;
+      const dateLabel = formatLocalDate(cycleDate, "");
+      const doc = new jsPDF();
+      doc.setFontSize(15);
+      doc.text(`Demand Preview${dateLabel ? ` — ${dateLabel}` : ""}`, 14, 16);
+      doc.setFontSize(10);
+      doc.setTextColor(110);
+      doc.text(`Categories: ${pickedCategories.join(", ")}`, 14, 23);
+
+      const totalDemand = selected.reduce((s, r) => s + r.total_demand, 0);
+      const totalShort = selected.reduce((s, r) => s + r.projected_shortfall, 0);
+
+      autoTable(doc, {
+        startY: 28,
+        head: [["Item", "Category", "Demand", "Factory Avail.", "Shortfall"]],
+        body: selected.map((r) => [
+          r.item_name,
+          r.sub_category ?? "",
+          String(r.total_demand),
+          r.type === "manufactured" ? String(r.factory_available) : "—",
+          r.projected_shortfall > 0 ? String(r.projected_shortfall) : "0",
+        ]),
+        foot: [["Total", "", String(totalDemand), "", String(totalShort)]],
+        styles: { fontSize: 9, cellPadding: 2 },
+        headStyles: { fillColor: [15, 23, 42] },
+        footStyles: { fillColor: [241, 245, 249], textColor: 20, fontStyle: "bold" },
+        columnStyles: {
+          2: { halign: "right" },
+          3: { halign: "right" },
+          4: { halign: "right" },
+        },
+      });
+
+      const safe = (pickedCategories.length === categories.length
+        ? "all"
+        : pickedCategories.join("-")
+      )
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-");
+      doc.save(`demand-${dateLabel || cycleId.slice(0, 8)}-${safe}.pdf`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const columnDefs: ColDef<PreviewRow>[] = [
     {
       headerName: "Item",
@@ -1287,6 +1384,37 @@ function PreviewTab({ cycleId }: { cycleId: string }) {
         Live demand vs available stock. Updates as boxes are logged. Use
         the Allocations tab when you&apos;re ready to finalize the order.
       </p>
+
+      {categories.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-slate-950/40 p-3">
+          <span className="text-xs font-medium uppercase tracking-wider text-slate-400">
+            Export PDF
+          </span>
+          {categories.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => toggleCat(c)}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                isCatPicked(c)
+                  ? "bg-cyan-500/20 text-cyan-200 ring-1 ring-cyan-400/40"
+                  : "bg-slate-800 text-slate-500 ring-1 ring-white/10"
+              }`}
+            >
+              {c}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={exportPdf}
+            disabled={exporting || pickedCategories.length === 0}
+            className="ml-auto rounded-full bg-cyan-500 px-4 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:opacity-50"
+          >
+            {exporting ? "Generating…" : "Export PDF"}
+          </button>
+        </div>
+      )}
+
       <div style={{ height: 460 }}>
         <AgGridReact
           rowData={rows}
