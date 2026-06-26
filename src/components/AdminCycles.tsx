@@ -2232,7 +2232,8 @@ type DeliveryRow = {
   sub_category: string;
   item_name: string;
   total: number;
-  [storeName: string]: string | number;
+  // Per-store quantities, keyed by store id (the column's colId/field).
+  [storeId: string]: string | number;
 };
 
 const titleCaseDelivery = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -2249,6 +2250,12 @@ function DeliveriesTab({
   onFinalized: () => Promise<void> | void;
 }) {
   const [allocations, setAllocations] = useState<DeliveryAllocation[]>([]);
+  // Stores participating in this cycle (id + name), the authoritative column
+  // list. Sourced from cycle_stores so a store's column never blinks out of
+  // existence just because its delivered quantity dropped to zero — that
+  // vanishing column was what made AG Grid log "column <store> not found"
+  // whenever the grid was sorted/filtered by a store whose total went to 0.
+  const [cycleStores, setCycleStores] = useState<Array<{ id: string; name: string }>>([]);
   const [marking, setMarking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -2256,18 +2263,30 @@ function DeliveriesTab({
   const reloadTokenRef = useRef(0);
   const reload = useCallback(async () => {
     const myToken = ++reloadTokenRef.current;
-    const { data, error } = await supabase
-      .from("allocations")
-      .select(
-        "cycle_id,store_id,item_id,qty,factory_id,stores(name),items(name,type,sub_category)",
-      )
-      .eq("cycle_id", cycleId);
+    const [allocRes, storesRes] = await Promise.all([
+      supabase
+        .from("allocations")
+        .select(
+          "cycle_id,store_id,item_id,qty,factory_id,stores(name),items(name,type,sub_category)",
+        )
+        .eq("cycle_id", cycleId),
+      supabase
+        .from("cycle_stores")
+        .select("stores(id,name)")
+        .eq("cycle_id", cycleId),
+    ]);
     if (myToken !== reloadTokenRef.current) return;
-    if (error) {
+    if (allocRes.error) {
       // eslint-disable-next-line no-console
-      console.error("DeliveriesTab reload failed:", error);
+      console.error("DeliveriesTab reload failed:", allocRes.error);
     }
-    if (data) setAllocations(data as unknown as DeliveryAllocation[]);
+    if (allocRes.data) setAllocations(allocRes.data as unknown as DeliveryAllocation[]);
+    if (storesRes.data) {
+      const list = (storesRes.data as unknown as Array<{ stores: { id: string; name: string } | null }>)
+        .map((cs) => cs.stores)
+        .filter((s): s is { id: string; name: string } => !!s);
+      setCycleStores(list);
+    }
   }, [cycleId]);
 
   useEffect(() => {
@@ -2275,28 +2294,29 @@ function DeliveriesTab({
   }, [reload]);
 
   useRealtimeRefetch(
-    [{ table: "allocations", filter: `cycle_id=eq.${cycleId}` }],
+    [
+      { table: "allocations", filter: `cycle_id=eq.${cycleId}` },
+      { table: "cycle_stores", filter: `cycle_id=eq.${cycleId}` },
+    ],
     reload,
     `cycle-${cycleId}-deliveries`,
   );
 
-  const { storeNames, deliveryRows } = useMemo(() => {
+  const { storeColumns, deliveryRows } = useMemo(() => {
     const positive = allocations.filter((a) => a.qty > 0);
-    const stores = new Set<string>();
     type ItemAcc = {
       type: string;
       sub_category: string;
       item_name: string;
+      // Keyed by store id (stable), not name.
       perStore: Map<string, number>;
     };
     const items = new Map<string, ItemAcc>();
 
     positive.forEach((a) => {
-      const storeName = a.stores?.name ?? a.store_id;
       const itemName = a.items?.name ?? a.item_id;
       const type = titleCaseDelivery(a.items?.type ?? "uncategorized");
       const sub = a.items?.sub_category ?? "Uncategorized";
-      stores.add(storeName);
 
       if (!items.has(a.item_id)) {
         items.set(a.item_id, {
@@ -2307,10 +2327,13 @@ function DeliveriesTab({
         });
       }
       const acc = items.get(a.item_id)!;
-      acc.perStore.set(storeName, (acc.perStore.get(storeName) ?? 0) + a.qty);
+      acc.perStore.set(a.store_id, (acc.perStore.get(a.store_id) ?? 0) + a.qty);
     });
 
-    const sortedStores = Array.from(stores).sort((x, y) => x.localeCompare(y));
+    // Columns come from the cycle's participating stores, sorted by name, and
+    // are identified by store id so the column id is stable across reloads and
+    // safe regardless of the store's display name (slashes, dots, etc.).
+    const sortedStores = [...cycleStores].sort((x, y) => x.name.localeCompare(y.name));
     const sortedItems = Array.from(items.values()).sort((x, y) => {
       const t = x.type.localeCompare(y.type);
       if (t !== 0) return t;
@@ -2327,22 +2350,22 @@ function DeliveriesTab({
       };
       let total = 0;
       sortedStores.forEach((s) => {
-        const qty = acc.perStore.get(s) ?? 0;
-        row[s] = qty;
+        const qty = acc.perStore.get(s.id) ?? 0;
+        row[s.id] = qty;
         total += qty;
       });
       row.total = total;
       return row;
     });
 
-    return { storeNames: sortedStores, deliveryRows: rows };
-  }, [allocations]);
+    return { storeColumns: sortedStores, deliveryRows: rows };
+  }, [allocations, cycleStores]);
 
   const totalUnits = useMemo(
     () => deliveryRows.reduce((sum, r) => sum + r.total, 0),
     [deliveryRows],
   );
-  const storeCount = storeNames.length;
+  const storeCount = storeColumns.length;
 
   const columnDefs = useMemo<ColDef<DeliveryRow>[]>(() => {
     const dimZeros = (params: ValueFormatterParams<DeliveryRow>) => {
@@ -2363,16 +2386,18 @@ function DeliveriesTab({
         cellStyle: numericCellStyle,
         cellClass: "font-semibold",
       },
-      ...storeNames.map<ColDef<DeliveryRow>>((s) => ({
-        headerName: s,
-        field: s,
+      ...storeColumns.map<ColDef<DeliveryRow>>((s) => ({
+        headerName: s.name,
+        // colId/field is the store id — stable and free of name special chars.
+        colId: s.id,
+        field: s.id,
         width: 110,
         valueFormatter: dimZeros,
         cellStyle: numericCellStyle,
         cellClass: cellClassZero,
       })),
     ];
-  }, [storeNames]);
+  }, [storeColumns]);
 
   const isAllocated = cycleStatus === "allocated";
   const isDelivered = cycleStatus === "delivered";
