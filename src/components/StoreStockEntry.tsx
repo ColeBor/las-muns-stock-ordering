@@ -145,10 +145,13 @@ export default function StoreStockEntry() {
             current_count: r.current_count,
             entered_by: session?.user?.email ?? session?.user?.id ?? null,
           }));
-        if (missing.length > 0) {
+        // Write in chunks so a store with a large catalog can't stall the
+        // whole finish on one oversized request.
+        const CHUNK = 100;
+        for (let i = 0; i < missing.length; i += CHUNK) {
           const { error: upsertErr } = await supabase
             .from("stock_entries")
-            .upsert(missing, {
+            .upsert(missing.slice(i, i + CHUNK), {
               onConflict: "cycle_id,store_id,item_id",
               ignoreDuplicates: true,
             });
@@ -157,6 +160,7 @@ export default function StoreStockEntry() {
             return;
           }
         }
+        lastLocalWriteRef.current = Date.now();
       }
 
       const { error } = await supabase
@@ -170,7 +174,9 @@ export default function StoreStockEntry() {
       }
       setFinishedAt(newValue);
       setMessage(newValue ? "Marked as finished." : "Reopened for editing.");
-      if (newValue) await loadEntries();
+      // Reconcile in the background — don't block the button (and its
+      // finally-reset) on a refetch that could stall.
+      if (newValue) void loadEntries();
     } catch (err) {
       setMessage(
         err instanceof Error
@@ -305,16 +311,31 @@ export default function StoreStockEntry() {
     loadEntries();
   }, [loadEntries]);
 
+  // Timestamp of the worker's most recent own write. Each per-cell save fires
+  // a realtime event; if we refetch and rebuild gridData in response, AG Grid
+  // swaps rowData mid-edit and CANCELS the cell the worker is typing in —
+  // which silently drops their count (only cells that commit between rebuilds
+  // ever save). Our own writes are already reflected via optimistic local
+  // state, so we skip realtime-driven refetches for a few seconds after a
+  // local write and only reconcile from the server once they pause.
+  const lastLocalWriteRef = useRef(0);
+  const reloadFromRealtime = useCallback(async () => {
+    if (Date.now() - lastLocalWriteRef.current < 5000) return;
+    await loadEntries();
+  }, [loadEntries]);
+
   useRealtimeRefetch(
     selectedCycleId && effectiveStoreId
       ? [
           {
             table: "stock_entries",
-            filter: `cycle_id=eq.${selectedCycleId}`,
+            // Scope to THIS store's rows so other stores entering the same
+            // cycle don't trigger refetches that rebuild our grid.
+            filter: `store_id=eq.${effectiveStoreId}`,
           },
         ]
       : [],
-    loadEntries,
+    reloadFromRealtime,
     `store-${effectiveStoreId}-cycle-${selectedCycleId}-entries`,
   );
 
@@ -430,6 +451,9 @@ export default function StoreStockEntry() {
 
         if (error) throw error;
 
+        // Mark this as our own write so the realtime subscription doesn't
+        // refetch and rebuild the grid out from under the next cell edit.
+        lastLocalWriteRef.current = Date.now();
         setMessage("Stock count updated successfully.");
 
         // Update local entries state
