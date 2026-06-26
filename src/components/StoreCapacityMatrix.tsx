@@ -116,8 +116,12 @@ export default function StoreCapacityMatrix({ viewSelector }: { viewSelector?: R
   };
 
   // Changed, valid cells. A blank/invalid draft is ignored (not saved).
-  const changed = useMemo(() => {
+  // `changedKeys` lets the grid mark dirty cells in O(1) instead of scanning
+  // the whole change list per cell (which is quadratic once you've edited a
+  // few hundred cells, and was enough to lock the tab up mid-edit).
+  const { changed, changedKeys } = useMemo(() => {
     const out: Array<{ item_id: string; store_id: string; capacity: number }> = [];
+    const keys = new Set<string>();
     for (const k of active) {
       const raw = drafts[k];
       if (raw == null || raw.trim() === "") continue;
@@ -126,9 +130,10 @@ export default function StoreCapacityMatrix({ viewSelector }: { viewSelector?: R
       if (n !== (original[k] ?? 0)) {
         const [item_id, store_id] = k.split("|");
         out.push({ item_id, store_id, capacity: n });
+        keys.add(k);
       }
     }
-    return out;
+    return { changed: out, changedKeys: keys };
   }, [active, drafts, original]);
 
   const pending = changed.length;
@@ -138,12 +143,23 @@ export default function StoreCapacityMatrix({ viewSelector }: { viewSelector?: R
     setSaving(true);
     setMessage(null);
     try {
-      const { error } = await supabase
-        .from("store_items")
-        .upsert(changed, { onConflict: "store_id,item_id" });
-      if (error) {
-        setMessage(error.message);
-        return;
+      // Write in chunks rather than one giant upsert — a single request with
+      // hundreds of rows can stall long enough to look frozen. Chunking keeps
+      // each round-trip small and lets us show progress.
+      const CHUNK = 100;
+      for (let i = 0; i < changed.length; i += CHUNK) {
+        const slice = changed.slice(i, i + CHUNK);
+        const { error } = await supabase
+          .from("store_items")
+          .upsert(slice, { onConflict: "store_id,item_id" });
+        if (error) {
+          setMessage(`Saved ${i} of ${changed.length}, then failed: ${error.message}`);
+          await load();
+          return;
+        }
+        if (changed.length > CHUNK) {
+          setMessage(`Saving… ${Math.min(i + CHUNK, changed.length)} / ${changed.length}`);
+        }
       }
       setMessage(`Saved — ${pending} capacit${pending === 1 ? "y" : "ies"} updated.`);
       await load();
@@ -258,7 +274,7 @@ export default function StoreCapacityMatrix({ viewSelector }: { viewSelector?: R
                           {stores.map((s) => {
                             const k = key(it.id, s.id);
                             const editable = isActive(it.id, s.id);
-                            const dirty = editable && changed.some((c) => c.item_id === it.id && c.store_id === s.id);
+                            const dirty = editable && changedKeys.has(k);
                             return (
                               <td key={s.id} className="px-2 py-1 text-center">
                                 {editable ? (
