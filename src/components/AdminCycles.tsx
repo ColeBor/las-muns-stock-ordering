@@ -932,13 +932,11 @@ function FactoryCountsTab({ cycleId }: { cycleId: string }) {
 // week. Read-only — running allocations is still done from the
 // Allocations tab.
 //
-// Scoped to BOX_TRACED_CATEGORIES because those are the only items whose
-// counts auto-update from box traces during the week. Manually-counted
-// items (drinks etc.) don't change between cycle start and end-of-week
-// entry, so a live preview wouldn't tell admin anything useful for them.
-// Keep this list in sync with the Box Trace Log + StoreStockEntry's
-// BOX_TRACED_CATEGORIES.
-const PREVIEW_CATEGORIES = ["Empanada", "Dessert"];
+// Shows every item with positive demand across the cycle's stores, regardless
+// of category. Box-traced items (Empanada/Dessert) update live as boxes are
+// logged during the week; other items we stock (drinks, supplies, untraced
+// factory items) are static once counted, but their demand — and any factory
+// shortfall — is still worth surfacing here.
 type PreviewRow = {
   item_id: string;
   item_name: string;
@@ -1103,9 +1101,6 @@ function PreviewTab({ cycleId }: { cycleId: string }) {
       if (totalDemand <= 0) continue; // skip items with no demand
       const item = itemsById.get(itemId);
       if (!item) continue;
-      if (!item.sub_category || !PREVIEW_CATEGORIES.includes(item.sub_category)) {
-        continue; // preview is for box-traced categories only
-      }
       const factoryAvailable = factoryByItem.get(itemId) ?? 0;
       // Manufactured items rely on factory stock; purchased items go to
       // suppliers via POs and "factory available" doesn't apply — treat
