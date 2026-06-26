@@ -679,6 +679,10 @@ export default function StoreStockEntry() {
             <AgGridReact
               rowData={gridData}
               columnDefs={columnDefs}
+              // Match rows by item id so rebuilding rowData after a save does an
+              // in-place delta update instead of resetting the grid — this keeps
+              // the worker's scroll position instead of jumping to the top.
+              getRowId={(p) => p.data.item_id}
               defaultColDef={{
                 resizable: true,
                 sortable: true,
