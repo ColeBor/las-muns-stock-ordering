@@ -671,7 +671,7 @@ function CountsTab({
   cycleId: string;
   cycleStatus: string;
 }) {
-  type View = "preview" | "stock" | "factory";
+  type View = "preview" | "preview-by-store" | "stock" | "factory";
   const [view, setView] = useState<View>(
     cycleStatus === "delivered" ? "stock" : "preview",
   );
@@ -688,12 +688,15 @@ function CountsTab({
           className="rounded-2xl border border-white/10 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400"
         >
           <option value="preview">Preview</option>
+          <option value="preview-by-store">Preview by Store</option>
           <option value="stock">Store Counts</option>
           <option value="factory">Factory Counts</option>
         </select>
       </div>
       {view === "preview" ? (
         <PreviewTab cycleId={cycleId} />
+      ) : view === "preview-by-store" ? (
+        <PreviewByStoreTab cycleId={cycleId} />
       ) : view === "stock" ? (
         <StockEntriesTab cycleId={cycleId} />
       ) : (
@@ -1390,6 +1393,317 @@ function PreviewTab({ cycleId }: { cycleId: string }) {
           <span className="text-xs font-medium uppercase tracking-wider text-slate-400">
             Export PDF
           </span>
+          {categories.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => toggleCat(c)}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                isCatPicked(c)
+                  ? "bg-cyan-500/20 text-cyan-200 ring-1 ring-cyan-400/40"
+                  : "bg-slate-800 text-slate-500 ring-1 ring-white/10"
+              }`}
+            >
+              {c}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={exportPdf}
+            disabled={exporting || pickedCategories.length === 0}
+            className="ml-auto rounded-full bg-cyan-500 px-4 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:opacity-50"
+          >
+            {exporting ? "Generating…" : "Export PDF"}
+          </button>
+        </div>
+      )}
+
+      <div style={{ height: 460 }}>
+        <AgGridReact
+          rowData={rows}
+          columnDefs={columnDefs}
+          defaultColDef={{ resizable: true, sortable: true, filter: true, minWidth: 80 }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ─── Preview by Store ────────────────────────────────────────────────────────
+// Same per-item demand as the Preview tab, but kept broken out per store:
+// rows = items, columns = participating stores, cell = that store's demand
+// (override qty, else capacity - on_hand clamped at 0). Columns are keyed by
+// store id (name in the header) so they're stable across reloads. The PDF
+// export mirrors the grid — demand per store per item — with a totals row.
+type StoreDemandRow = {
+  item_id: string;
+  item_name: string;
+  type: string;
+  sub_category: string;
+  total: number;
+  // Per-store demand, keyed by store id (the column's colId/field).
+  [storeId: string]: string | number;
+};
+
+function PreviewByStoreTab({ cycleId }: { cycleId: string }) {
+  const [storeColumns, setStoreColumns] = useState<Array<{ id: string; name: string }>>([]);
+  const [rows, setRows] = useState<StoreDemandRow[]>([]);
+  const [exportCats, setExportCats] = useState<Set<string> | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [cycleDate, setCycleDate] = useState<string | null>(null);
+  const loadTokenRef = useRef(0);
+
+  useEffect(() => {
+    let active = true;
+    supabase
+      .from("order_cycles")
+      .select("order_date")
+      .eq("id", cycleId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (active) setCycleDate((data as { order_date: string | null } | null)?.order_date ?? null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [cycleId]);
+
+  const load = useCallback(async () => {
+    const myToken = ++loadTokenRef.current;
+    const [cycleStoresRes, stockEntriesRes, storeItemsRes, itemsRes, overridesRes] =
+      await Promise.all([
+        supabase.from("cycle_stores").select("stores(id,name)").eq("cycle_id", cycleId),
+        supabase.from("stock_entries").select("store_id,item_id,current_count").eq("cycle_id", cycleId),
+        supabase.from("store_items").select("store_id,item_id,capacity").eq("is_active", true),
+        supabase.from("items").select("id,name,type,sub_category"),
+        supabase.from("allocation_overrides").select("store_id,item_id,qty,mode").eq("cycle_id", cycleId),
+      ]);
+    if (myToken !== loadTokenRef.current) return;
+    if (
+      !cycleStoresRes.data ||
+      !stockEntriesRes.data ||
+      !storeItemsRes.data ||
+      !itemsRes.data ||
+      !overridesRes.data
+    ) {
+      return;
+    }
+
+    const stores = (cycleStoresRes.data as unknown as Array<{ stores: { id: string; name: string } | null }>)
+      .map((c) => c.stores)
+      .filter((s): s is { id: string; name: string } => !!s)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const allowed = new Set(stores.map((s) => s.id));
+
+    const onHandByKey = new Map<string, number>();
+    for (const se of stockEntriesRes.data as Array<{ store_id: string; item_id: string; current_count: number }>) {
+      onHandByKey.set(`${se.store_id}|${se.item_id}`, se.current_count);
+    }
+    const overrideByKey = new Map<string, { qty: number; mode: "soft" | "hard" }>();
+    for (const o of overridesRes.data as Array<{ store_id: string; item_id: string; qty: number; mode: "soft" | "hard" }>) {
+      if (allowed.has(o.store_id)) overrideByKey.set(`${o.store_id}|${o.item_id}`, { qty: o.qty, mode: o.mode });
+    }
+
+    const itemsById = new Map(
+      (itemsRes.data as Array<{ id: string; name: string; type: string; sub_category: string | null }>).map((i) => [i.id, i]),
+    );
+
+    type Acc = { type: string; sub_category: string | null; item_name: string; perStore: Map<string, number> };
+    const acc = new Map<string, Acc>();
+    const capKeys = new Set<string>();
+    const add = (storeId: string, itemId: string, demand: number) => {
+      if (demand <= 0) return;
+      const it = itemsById.get(itemId);
+      if (!it) return;
+      let a = acc.get(itemId);
+      if (!a) {
+        a = { type: it.type, sub_category: it.sub_category, item_name: it.name, perStore: new Map() };
+        acc.set(itemId, a);
+      }
+      a.perStore.set(storeId, (a.perStore.get(storeId) ?? 0) + demand);
+    };
+
+    for (const si of storeItemsRes.data as Array<{ store_id: string; item_id: string; capacity: number }>) {
+      if (!allowed.has(si.store_id)) continue;
+      const key = `${si.store_id}|${si.item_id}`;
+      capKeys.add(key);
+      const ov = overrideByKey.get(key);
+      const demand = ov ? ov.qty : Math.max(0, si.capacity - (onHandByKey.get(key) ?? 0));
+      add(si.store_id, si.item_id, demand);
+    }
+    // Override-only pairs (a store force-overridden for an item it doesn't carry).
+    for (const [key, ov] of overrideByKey.entries()) {
+      if (capKeys.has(key)) continue;
+      const [storeId, itemId] = key.split("|");
+      add(storeId, itemId, ov.qty);
+    }
+
+    const rowList: StoreDemandRow[] = [];
+    for (const [itemId, a] of acc.entries()) {
+      let total = 0;
+      const row: StoreDemandRow = {
+        item_id: itemId,
+        item_name: a.item_name,
+        type: a.type,
+        sub_category: a.sub_category ?? "Uncategorized",
+        total: 0,
+      };
+      for (const s of stores) {
+        const v = a.perStore.get(s.id) ?? 0;
+        row[s.id] = v;
+        total += v;
+      }
+      if (total <= 0) continue;
+      row.total = total;
+      rowList.push(row);
+    }
+    rowList.sort(
+      (a, b) =>
+        (a.sub_category ?? "").localeCompare(b.sub_category ?? "") ||
+        a.item_name.localeCompare(b.item_name),
+    );
+
+    setStoreColumns(stores);
+    setRows(rowList);
+  }, [cycleId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useRealtimeRefetch(
+    [
+      { table: "stock_entries", filter: `cycle_id=eq.${cycleId}` },
+      { table: "cycle_stores", filter: `cycle_id=eq.${cycleId}` },
+      { table: "allocation_overrides", filter: `cycle_id=eq.${cycleId}` },
+      { table: "store_items" },
+    ],
+    load,
+    `cycle-${cycleId}-preview-by-store`,
+  );
+
+  const categories = useMemo(
+    () =>
+      Array.from(new Set(rows.map((r) => r.sub_category).filter((c): c is string => !!c))).sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [rows],
+  );
+  const isCatPicked = (c: string) => exportCats === null || exportCats.has(c);
+  const toggleCat = (c: string) =>
+    setExportCats((prev) => {
+      const base = prev === null ? new Set(categories) : new Set(prev);
+      if (base.has(c)) base.delete(c);
+      else base.add(c);
+      return base;
+    });
+  const pickedCategories = exportCats === null ? categories : categories.filter((c) => exportCats.has(c));
+
+  const grandTotal = useMemo(() => rows.reduce((s, r) => s + r.total, 0), [rows]);
+
+  const columnDefs = useMemo<ColDef<StoreDemandRow>[]>(() => {
+    const dimZeros = (params: ValueFormatterParams<StoreDemandRow>) => {
+      const v = Number(params.value ?? 0);
+      return v === 0 ? "—" : String(v);
+    };
+    const cellClassZero = (params: CellClassParams<StoreDemandRow>) =>
+      Number(params.value ?? 0) === 0 ? "text-slate-600" : "";
+    const numericCellStyle = { textAlign: "right" as const };
+    return [
+      { headerName: "Item", field: "item_name", pinned: "left", flex: 1, minWidth: 170 },
+      { headerName: "Category", field: "sub_category", width: 140 },
+      {
+        headerName: "Total",
+        field: "total",
+        width: 90,
+        cellStyle: numericCellStyle,
+        cellClass: "font-semibold",
+      },
+      ...storeColumns.map<ColDef<StoreDemandRow>>((s) => ({
+        headerName: s.name,
+        colId: s.id,
+        field: s.id,
+        width: 110,
+        valueFormatter: dimZeros,
+        cellStyle: numericCellStyle,
+        cellClass: cellClassZero,
+      })),
+    ];
+  }, [storeColumns]);
+
+  const exportPdf = async () => {
+    const picked = new Set(pickedCategories);
+    const selected = rows.filter((r) => r.sub_category && picked.has(r.sub_category));
+    if (selected.length === 0) return;
+    setExporting(true);
+    try {
+      const [{ jsPDF }, autoTableMod] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
+      const autoTable = autoTableMod.default;
+      const dateLabel = formatLocalDate(cycleDate, "");
+      // Landscape — a column per store gets wide fast.
+      const doc = new jsPDF({ orientation: "landscape" });
+      doc.setFontSize(15);
+      doc.text(`Demand by Store${dateLabel ? ` — ${dateLabel}` : ""}`, 14, 15);
+      doc.setFontSize(10);
+      doc.setTextColor(110);
+      doc.text(`Categories: ${pickedCategories.join(", ")}`, 14, 21);
+
+      const storeTotals = storeColumns.map((s) =>
+        selected.reduce((sum, r) => sum + Number(r[s.id] ?? 0), 0),
+      );
+      const grand = selected.reduce((sum, r) => sum + r.total, 0);
+
+      autoTable(doc, {
+        startY: 26,
+        head: [["Item", "Category", ...storeColumns.map((s) => s.name), "Total"]],
+        body: selected.map((r) => [
+          r.item_name,
+          r.sub_category ?? "",
+          ...storeColumns.map((s) => {
+            const v = Number(r[s.id] ?? 0);
+            return v === 0 ? "—" : String(v);
+          }),
+          String(r.total),
+        ]),
+        foot: [["Total", "", ...storeTotals.map((t) => String(t)), String(grand)]],
+        styles: { fontSize: 8, cellPadding: 1.5 },
+        headStyles: { fillColor: [15, 23, 42] },
+        footStyles: { fillColor: [241, 245, 249], textColor: 20, fontStyle: "bold" },
+        columnStyles: Object.fromEntries(
+          storeColumns.map((_, i) => [i + 2, { halign: "right" as const }]).concat([[storeColumns.length + 2, { halign: "right" as const }]]),
+        ),
+      });
+
+      const safe = (pickedCategories.length === categories.length ? "all" : pickedCategories.join("-"))
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-");
+      doc.save(`demand-by-store-${dateLabel || cycleId.slice(0, 8)}-${safe}.pdf`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-2xl bg-slate-950/60 p-4 text-sm text-slate-300 flex flex-wrap gap-4">
+        <span>
+          <strong className="text-white">{rows.length}</strong> items with demand
+        </span>
+        <span>
+          <strong className="text-white">{grandTotal}</strong> total units demanded
+        </span>
+        <span>
+          <strong className="text-white">{storeColumns.length}</strong> stores
+        </span>
+      </div>
+      <p className="text-xs text-slate-500">
+        Per-store demand (capacity minus on-hand, or an override) for every item.
+        Export a category-filtered PDF broken down by store.
+      </p>
+
+      {categories.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-slate-950/40 p-3">
+          <span className="text-xs font-medium uppercase tracking-wider text-slate-400">Export PDF</span>
           {categories.map((c) => (
             <button
               key={c}
