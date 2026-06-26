@@ -671,10 +671,12 @@ function CountsTab({
   cycleId: string;
   cycleStatus: string;
 }) {
-  type View = "preview" | "preview-by-store" | "stock" | "factory";
+  type View = "preview" | "stock" | "factory";
   const [view, setView] = useState<View>(
     cycleStatus === "delivered" ? "stock" : "preview",
   );
+  // On the Preview view, optionally break demand out per store.
+  const [byStore, setByStore] = useState(false);
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
@@ -688,15 +690,27 @@ function CountsTab({
           className="rounded-2xl border border-white/10 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400"
         >
           <option value="preview">Preview</option>
-          <option value="preview-by-store">Preview by Store</option>
           <option value="stock">Store Counts</option>
           <option value="factory">Factory Counts</option>
         </select>
+        {view === "preview" && (
+          <label className="flex items-center gap-2 text-sm text-slate-300">
+            <input
+              type="checkbox"
+              checked={byStore}
+              onChange={(e) => setByStore(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-600 bg-slate-800"
+            />
+            Break down by store
+          </label>
+        )}
       </div>
       {view === "preview" ? (
-        <PreviewTab cycleId={cycleId} />
-      ) : view === "preview-by-store" ? (
-        <PreviewByStoreTab cycleId={cycleId} />
+        byStore ? (
+          <PreviewByStoreTab cycleId={cycleId} />
+        ) : (
+          <PreviewTab cycleId={cycleId} />
+        )
       ) : view === "stock" ? (
         <StockEntriesTab cycleId={cycleId} />
       ) : (
@@ -1004,7 +1018,7 @@ function PreviewTab({ cycleId }: { cycleId: string }) {
         .from("factory_counts")
         .select("item_id,available_qty")
         .eq("cycle_id", cycleId),
-      supabase.from("items").select("id,name,type,sub_category"),
+      supabase.from("items").select("id,name,type,sub_category,track_factory_stock"),
       supabase
         .from("allocation_overrides")
         .select("store_id,item_id,qty,mode")
@@ -1117,6 +1131,7 @@ function PreviewTab({ cycleId }: { cycleId: string }) {
           name: string;
           type: string;
           sub_category: string | null;
+          track_factory_stock: boolean;
         }>
       ).map((i) => [i.id, i]),
     );
@@ -1126,21 +1141,22 @@ function PreviewTab({ cycleId }: { cycleId: string }) {
       if (totalDemand <= 0) continue; // skip items with no demand
       const item = itemsById.get(itemId);
       if (!item) continue;
+      // Only items the factory actually supplies belong in this view — the
+      // same rule the allocation engine uses (manufactured, or explicitly
+      // tracked at the factory like drinks). Purchased store-direct items
+      // (receipt paper, cleaning supplies, …) go via supplier POs and aren't
+      // part of factory demand.
+      const factoryStocked = item.type === "manufactured" || item.track_factory_stock;
+      if (!factoryStocked) continue;
       const factoryAvailable = factoryByItem.get(itemId) ?? 0;
-      // Manufactured items rely on factory stock; purchased items go to
-      // suppliers via POs and "factory available" doesn't apply — treat
-      // the whole demand as a "to-order" amount instead.
-      const shortfall =
-        item.type === "manufactured"
-          ? Math.max(0, totalDemand - factoryAvailable)
-          : 0;
+      const shortfall = Math.max(0, totalDemand - factoryAvailable);
       previewRows.push({
         item_id: itemId,
         item_name: item.name,
         type: item.type,
         sub_category: item.sub_category,
         total_demand: totalDemand,
-        factory_available: item.type === "manufactured" ? factoryAvailable : 0,
+        factory_available: factoryAvailable,
         projected_shortfall: shortfall,
         has_hard_override: hardOverrideItems.has(itemId),
       });
@@ -1244,12 +1260,13 @@ function PreviewTab({ cycleId }: { cycleId: string }) {
         ]),
         foot: [["Total", "", String(totalDemand), "", String(totalShort)]],
         styles: { fontSize: 9, cellPadding: 2 },
-        headStyles: { fillColor: [15, 23, 42] },
+        headStyles: { fillColor: [15, 23, 42], halign: "right" },
         footStyles: { fillColor: [241, 245, 249], textColor: 20, fontStyle: "bold" },
-        columnStyles: {
-          2: { halign: "right" },
-          3: { halign: "right" },
-          4: { halign: "right" },
+        // Right-align the numeric columns (Demand, Factory Avail., Shortfall)
+        // across head, body and foot; Item and Category stay left-aligned.
+        didParseCell: (data) => {
+          if (data.column.index < 2) data.cell.styles.halign = "left";
+          else data.cell.styles.halign = "right";
         },
       });
 
@@ -1475,7 +1492,7 @@ function PreviewByStoreTab({ cycleId }: { cycleId: string }) {
         supabase.from("cycle_stores").select("stores(id,name)").eq("cycle_id", cycleId),
         supabase.from("stock_entries").select("store_id,item_id,current_count").eq("cycle_id", cycleId),
         supabase.from("store_items").select("store_id,item_id,capacity").eq("is_active", true),
-        supabase.from("items").select("id,name,type,sub_category"),
+        supabase.from("items").select("id,name,type,sub_category,track_factory_stock"),
         supabase.from("allocation_overrides").select("store_id,item_id,qty,mode").eq("cycle_id", cycleId),
       ]);
     if (myToken !== loadTokenRef.current) return;
@@ -1505,7 +1522,15 @@ function PreviewByStoreTab({ cycleId }: { cycleId: string }) {
     }
 
     const itemsById = new Map(
-      (itemsRes.data as Array<{ id: string; name: string; type: string; sub_category: string | null }>).map((i) => [i.id, i]),
+      (
+        itemsRes.data as Array<{
+          id: string;
+          name: string;
+          type: string;
+          sub_category: string | null;
+          track_factory_stock: boolean;
+        }>
+      ).map((i) => [i.id, i]),
     );
 
     type Acc = { type: string; sub_category: string | null; item_name: string; perStore: Map<string, number> };
@@ -1515,6 +1540,9 @@ function PreviewByStoreTab({ cycleId }: { cycleId: string }) {
       if (demand <= 0) return;
       const it = itemsById.get(itemId);
       if (!it) return;
+      // Factory-supplied items only — same rule as the Preview tab and the
+      // allocation engine (manufactured, or tracked at the factory).
+      if (it.type !== "manufactured" && !it.track_factory_stock) return;
       let a = acc.get(itemId);
       if (!a) {
         a = { type: it.type, sub_category: it.sub_category, item_name: it.name, perStore: new Map() };
@@ -1667,11 +1695,15 @@ function PreviewByStoreTab({ cycleId }: { cycleId: string }) {
         ]),
         foot: [["Total", "", ...storeTotals.map((t) => String(t)), String(grand)]],
         styles: { fontSize: 8, cellPadding: 1.5 },
-        headStyles: { fillColor: [15, 23, 42] },
+        headStyles: { fillColor: [15, 23, 42], halign: "right" },
         footStyles: { fillColor: [241, 245, 249], textColor: 20, fontStyle: "bold" },
-        columnStyles: Object.fromEntries(
-          storeColumns.map((_, i) => [i + 2, { halign: "right" as const }]).concat([[storeColumns.length + 2, { halign: "right" as const }]]),
-        ),
+        // Right-align every numeric column (stores + Total) across head, body
+        // and foot so each header sits directly over its numbers. Item and
+        // Category (cols 0-1) stay left-aligned.
+        didParseCell: (data) => {
+          if (data.column.index < 2) data.cell.styles.halign = "left";
+          else data.cell.styles.halign = "right";
+        },
       });
 
       const safe = (pickedCategories.length === categories.length ? "all" : pickedCategories.join("-"))
