@@ -101,6 +101,10 @@ export default function WasteLog() {
   const [uploadingPhotos, setUploadingPhotos] = useState(false);
   // Signed thumbnail URLs for the recent-waste table, keyed by entry id.
   const [photosByEntry, setPhotosByEntry] = useState<Record<string, Array<{ id: string; url: string }>>>({});
+  // Manager photo reviews, keyed by entry id, plus the manager's in-progress drafts.
+  const [reviewByEntry, setReviewByEntry] = useState<Record<string, { note: string; reviewed_by: string | null }>>({});
+  const [reviewDrafts, setReviewDrafts] = useState<Record<string, string>>({});
+  const [reviewingId, setReviewingId] = useState<string | null>(null);
 
   // Opportunistically purge photos past their 3-day expiry on page load.
   useEffect(() => {
@@ -238,11 +242,33 @@ export default function WasteLog() {
     loadPhotos();
   }, [loadPhotos]);
 
+  // Manager reviews of waste photos for the recent entries.
+  const loadReviews = useCallback(async () => {
+    if (!effectiveStoreId) {
+      setReviewByEntry({});
+      return;
+    }
+    const { data } = await supabase
+      .from("waste_log_reviews")
+      .select("waste_log_id,note,reviewed_by")
+      .eq("store_id", effectiveStoreId);
+    const byEntry: Record<string, { note: string; reviewed_by: string | null }> = {};
+    for (const r of (data as Array<{ waste_log_id: string; note: string; reviewed_by: string | null }>) ?? []) {
+      byEntry[r.waste_log_id] = { note: r.note, reviewed_by: r.reviewed_by };
+    }
+    setReviewByEntry(byEntry);
+  }, [effectiveStoreId]);
+
+  useEffect(() => {
+    loadReviews();
+  }, [loadReviews]);
+
   useRealtimeRefetch(
     effectiveStoreId
       ? [
           { table: "waste_log_entries", filter: `store_id=eq.${effectiveStoreId}` },
           { table: "waste_log_photos", filter: `store_id=eq.${effectiveStoreId}` },
+          { table: "waste_log_reviews", filter: `store_id=eq.${effectiveStoreId}` },
           { table: "store_items", filter: `store_id=eq.${effectiveStoreId}` },
           { table: "items" },
         ]
@@ -251,9 +277,66 @@ export default function WasteLog() {
       loadEntries();
       loadItems();
       loadPhotos();
-    }, [loadEntries, loadItems, loadPhotos]),
+      loadReviews();
+    }, [loadEntries, loadItems, loadPhotos, loadReviews]),
     `waste-log-${effectiveStoreId}`,
   );
+
+  // Manager (store owner) saves a review note for a waste entry's photo. Stores
+  // the note on the waste log and pushes a resolved "Waste Review" item to the
+  // store's Requests & Issues tab.
+  const submitReview = async (entry: WasteEntry) => {
+    if (!isStoreManager) return;
+    const note = (reviewDrafts[entry.id] ?? "").trim();
+    if (!note) {
+      setMessage("Write a short review first.");
+      return;
+    }
+    setReviewingId(entry.id);
+    setMessage(null);
+    try {
+      const reviewer = session?.user?.email ?? session?.user?.id ?? null;
+      const { error } = await supabase.from("waste_log_reviews").upsert(
+        {
+          waste_log_id: entry.id,
+          store_id: entry.store_id,
+          note,
+          reviewed_by: reviewer,
+          reviewed_at: new Date().toISOString(),
+        },
+        { onConflict: "waste_log_id" },
+      );
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      // Surface it to the store as a resolved request so it lands in their
+      // Requests & Issues tab with the note in the resolution box.
+      const itemName = itemNameById[entry.item_id] ?? "an item";
+      const { error: annErr } = await supabase.from("employee_requests").insert({
+        store_id: entry.store_id,
+        category: "Waste Review",
+        submitted_by_label: reviewer,
+        description: `A Manager has replied to your waste picture (${itemName}, ${formatDate(entry.wasted_on)}).`,
+        status: "resolved",
+        resolution_note: note,
+      });
+      if (annErr) {
+        // The review itself saved; just note the announcement hiccup.
+        setMessage(`Review saved, but couldn't notify the store: ${annErr.message}`);
+      } else {
+        setMessage("Review sent to the store.");
+      }
+      setReviewDrafts((prev) => ({ ...prev, [entry.id]: "" }));
+      loadReviews();
+    } catch (err) {
+      setMessage(
+        err instanceof Error ? `Couldn't save review: ${err.message}` : "Couldn't save review. Try again.",
+      );
+    } finally {
+      setReviewingId(null);
+    }
+  };
 
   const MAX_PHOTO_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -690,6 +773,7 @@ export default function WasteLog() {
                           <th className="px-3 py-2">Reason</th>
                           <th className="px-3 py-2">By</th>
                           <th className="px-3 py-2">Photos</th>
+                          <th className="px-3 py-2">Manager review</th>
                           <th className="px-3 py-2"></th>
                         </tr>
                       </thead>
@@ -714,7 +798,50 @@ export default function WasteLog() {
                                 ))}
                               </div>
                             </td>
-                            <td className="px-3 py-2 text-right">
+                            <td className="px-3 py-2 align-top">
+                              {isStoreManager ? (
+                                (photosByEntry[entry.id]?.length ?? 0) > 0 || reviewByEntry[entry.id] ? (
+                                  <div className="space-y-1">
+                                    {reviewByEntry[entry.id] && (
+                                      <p className="max-w-[14rem] text-xs text-emerald-300">
+                                        ✓ {reviewByEntry[entry.id].note}
+                                      </p>
+                                    )}
+                                    <div className="flex items-start gap-1">
+                                      <input
+                                        type="text"
+                                        value={reviewDrafts[entry.id] ?? ""}
+                                        onChange={(e) =>
+                                          setReviewDrafts((p) => ({ ...p, [entry.id]: e.target.value }))
+                                        }
+                                        placeholder={
+                                          reviewByEntry[entry.id] ? "Update review…" : "e.g. Still OK to sell"
+                                        }
+                                        maxLength={200}
+                                        className="w-40 rounded-lg border border-white/10 bg-slate-950 px-2 py-1 text-xs text-white outline-none focus:border-cyan-400"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => submitReview(entry)}
+                                        disabled={reviewingId === entry.id}
+                                        className="rounded-lg bg-cyan-500 px-2 py-1 text-xs font-semibold text-slate-950 disabled:opacity-50"
+                                      >
+                                        {reviewingId === entry.id ? "…" : "Send"}
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-600">—</span>
+                                )
+                              ) : reviewByEntry[entry.id] ? (
+                                <span className="max-w-[14rem] text-xs text-emerald-300">
+                                  ✓ {reviewByEntry[entry.id].note}
+                                </span>
+                              ) : (
+                                <span className="text-slate-600">—</span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right align-top">
                               <button
                                 type="button"
                                 onClick={() => handleDeleteEntry(entry.id)}
