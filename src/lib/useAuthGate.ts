@@ -72,10 +72,36 @@ export function useAuthGate(): AuthGate {
       setSessionLoaded(true);
     }, 4000);
 
+    // Re-validate when the app comes back to the foreground. A PWA keeps the
+    // page alive across background/resume, so the in-memory session can be
+    // stale or expired when the user returns — without this, pages wrongly
+    // show the login screen (or fail to load) until the app is fully closed
+    // and reopened. getSession() refreshes an expired token if needed, and
+    // any change flows through the same identity-checked setSession below.
+    const revalidate = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      supabase.auth
+        .getSession()
+        .then(({ data }) => {
+          if (!alive) return;
+          setSession((prev) => {
+            const prevId = prev?.user?.id ?? null;
+            const nextId = data.session?.user?.id ?? null;
+            return prevId === nextId ? prev : data.session ?? null;
+          });
+          setSessionLoaded(true);
+        })
+        .catch(() => {});
+    };
+    document.addEventListener("visibilitychange", revalidate);
+    window.addEventListener("focus", revalidate);
+
     return () => {
       alive = false;
       window.clearTimeout(timer);
       listener?.subscription.unsubscribe();
+      document.removeEventListener("visibilitychange", revalidate);
+      window.removeEventListener("focus", revalidate);
     };
   }, []);
 

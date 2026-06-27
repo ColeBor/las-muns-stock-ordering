@@ -19,18 +19,29 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 // small-team tool where cross-tab refresh races are negligible.
 
 // Belt-and-suspenders for the same family of hangs: cap every outgoing
-// fetch (REST queries, auth refreshes, storage uploads, …) at 20s. If
-// something stalls beyond that, AbortController kicks in and the caller
-// receives a rejection it can recover from instead of the UI sitting on
-// Loading… / Running… forever. Honor a caller-supplied signal if there
-// is one — don't double-abort.
+// fetch (REST queries, storage uploads, …) at 10s. If something stalls
+// beyond that, AbortController kicks in and the caller receives a rejection
+// it can recover from instead of the UI sitting on Loading… / Running…
+// forever. Honor a caller-supplied signal if there is one — don't double-abort.
+//
+// AUTH requests (/auth/v1/* — getSession, token refresh) get a much longer
+// cap. When the app resumes from background on mobile, the radio is cold and
+// that first refresh can legitimately take >10s; aborting it dropped the
+// session and bounced the user to the login screen even though they were
+// signed in. The auth gate's own 4s/5s safety timers still keep the UI from
+// hanging, so the longer cap here can't cause an infinite spinner — it just
+// lets a slow-but-valid refresh finish.
 const REQUEST_TIMEOUT_MS = 10_000;
+const AUTH_TIMEOUT_MS = 30_000;
+const urlOf = (input: RequestInfo | URL): string =>
+  typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
 const fetchWithTimeout: typeof fetch = (input, init) => {
   if (init?.signal) {
     return fetch(input, init);
   }
+  const timeout = urlOf(input).includes("/auth/v1/") ? AUTH_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => ctrl.abort(), timeout);
   return fetch(input, { ...init, signal: ctrl.signal }).finally(() =>
     clearTimeout(timer),
   );
