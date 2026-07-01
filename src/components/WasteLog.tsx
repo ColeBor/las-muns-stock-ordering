@@ -77,6 +77,57 @@ function todayIso() {
   return new Date(now.getTime() - tzOffsetMs).toISOString().slice(0, 10);
 }
 
+// Phone cameras produce multi-megapixel photos (several MB). Uploading those
+// raw over flaky in-store mobile data is what left the Save button stuck
+// forever. Downscale to a sane long edge and re-encode as JPEG before staging
+// so the actual upload is a few hundred KB. Anything we can't decode (e.g. an
+// iOS HEIC picked from the library) falls back to the original file untouched.
+const MAX_UPLOAD_DIM = 1600;
+
+async function shrinkForUpload(file: File): Promise<File> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, MAX_UPLOAD_DIM / Math.max(bitmap.width, bitmap.height));
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      bitmap.close();
+      return file;
+    }
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close();
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", 0.72),
+    );
+    // If re-encoding didn't actually help (e.g. an already-tiny image), keep the
+    // original so we never make a file bigger.
+    if (!blob || blob.size >= file.size) return file;
+    const base = file.name.replace(/\.[^.]+$/, "") || "photo";
+    return new File([blob], `${base}.jpg`, { type: "image/jpeg" });
+  } catch {
+    return file;
+  }
+}
+
+// A stalled request must not hang the Save button indefinitely. Race any upload
+// step against a timeout so the loop always settles and the finally block can
+// re-enable the button. The underlying request may keep going in the background;
+// we just stop waiting on it and report the failure.
+const UPLOAD_TIMEOUT_MS = 45_000;
+
+function withTimeout<T>(work: PromiseLike<T>, label: string): Promise<T> {
+  return Promise.race([
+    Promise.resolve(work),
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out — check your connection`)), UPLOAD_TIMEOUT_MS),
+    ),
+  ]);
+}
+
 export default function WasteLog() {
   const { session, profile, loading: authLoading, isSignedIn, isStoreManager, isEmployee } = useAuthGate();
   const [store, setStore] = useState<Store | null>(null);
@@ -340,8 +391,12 @@ export default function WasteLog() {
 
   const MAX_PHOTO_BYTES = 10 * 1024 * 1024; // 10 MB
 
-  const onPickPhotos = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
+  const onPickPhotos = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const input = e.target;
+    const files = Array.from(input.files ?? []);
+    // Reset up front so taking another photo (or re-picking the same file) fires
+    // onChange again, even while the compression below is still awaiting.
+    input.value = "";
     const valid: Array<{ file: File; url: string }> = [];
     for (const f of files) {
       if (!f.type.startsWith("image/")) continue;
@@ -349,11 +404,10 @@ export default function WasteLog() {
         setMessage(`"${f.name}" is too large (max 10 MB).`);
         continue;
       }
-      valid.push({ file: f, url: URL.createObjectURL(f) });
+      const shrunk = await shrinkForUpload(f);
+      valid.push({ file: shrunk, url: URL.createObjectURL(shrunk) });
     }
     if (valid.length) setStagedPhotos((prev) => [...prev, ...valid]);
-    // Reset so taking another photo (or re-picking the same file) fires onChange.
-    e.target.value = "";
   };
 
   const removeStagedPhoto = (idx: number) => {
@@ -436,25 +490,36 @@ export default function WasteLog() {
           const ext =
             (sp.file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
           const path = `${effectiveStoreId}/${inserted.id}/${crypto.randomUUID()}.${ext}`;
-          const { error: upErr } = await supabase.storage
-            .from("waste-photos")
-            .upload(path, sp.file, { contentType: sp.file.type || undefined, upsert: false });
-          if (upErr) {
-            setMessage(`Photo upload failed: ${upErr.message}`);
+          try {
+            const { error: upErr } = await withTimeout(
+              supabase.storage
+                .from("waste-photos")
+                .upload(path, sp.file, { contentType: sp.file.type || undefined, upsert: false }),
+              "Photo upload",
+            );
+            if (upErr) {
+              setMessage(`Photo upload failed: ${upErr.message}`);
+              continue;
+            }
+            const { error: rowErr } = await withTimeout(
+              supabase.from("waste_log_photos").insert({
+                waste_log_id: inserted.id,
+                store_id: effectiveStoreId,
+                storage_path: path,
+              }),
+              "Photo save",
+            );
+            if (rowErr) {
+              // Roll back the orphaned file so it isn't left without a row.
+              await supabase.storage.from("waste-photos").remove([path]);
+              setMessage(`Photo save failed: ${rowErr.message}`);
+              continue;
+            }
+            uploaded += 1;
+          } catch (photoErr) {
+            setMessage(photoErr instanceof Error ? photoErr.message : "Photo upload failed. Try again.");
             continue;
           }
-          const { error: rowErr } = await supabase.from("waste_log_photos").insert({
-            waste_log_id: inserted.id,
-            store_id: effectiveStoreId,
-            storage_path: path,
-          });
-          if (rowErr) {
-            // Roll back the orphaned file so it isn't left without a row.
-            await supabase.storage.from("waste-photos").remove([path]);
-            setMessage(`Photo save failed: ${rowErr.message}`);
-            continue;
-          }
-          uploaded += 1;
         }
         setUploadingPhotos(false);
       }
