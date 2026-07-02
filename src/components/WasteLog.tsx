@@ -84,30 +84,64 @@ function todayIso() {
 // iOS HEIC picked from the library) falls back to the original file untouched.
 const MAX_UPLOAD_DIM = 1600;
 
+// Decode an image to something canvas can draw. Prefer createImageBitmap (fast,
+// off-thread) but fall back to an <img>+objectURL because older iOS Safari
+// either lacks createImageBitmap or can't decode the camera's format with it.
+async function decodeToDrawable(
+  file: File,
+): Promise<{ src: CanvasImageSource; width: number; height: number; done: () => void }> {
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bitmap = await createImageBitmap(file);
+      return { src: bitmap, width: bitmap.width, height: bitmap.height, done: () => bitmap.close() };
+    } catch {
+      // Fall through to the <img> path below.
+    }
+  }
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error("decode failed"));
+      el.src = url;
+    });
+    return {
+      src: img,
+      width: img.naturalWidth,
+      height: img.naturalHeight,
+      done: () => URL.revokeObjectURL(url),
+    };
+  } catch (err) {
+    URL.revokeObjectURL(url);
+    throw err;
+  }
+}
+
 async function shrinkForUpload(file: File): Promise<File> {
   try {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, MAX_UPLOAD_DIM / Math.max(bitmap.width, bitmap.height));
-    const w = Math.max(1, Math.round(bitmap.width * scale));
-    const h = Math.max(1, Math.round(bitmap.height * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      bitmap.close();
-      return file;
+    const { src, width, height, done } = await decodeToDrawable(file);
+    try {
+      const scale = Math.min(1, MAX_UPLOAD_DIM / Math.max(width, height));
+      const w = Math.max(1, Math.round(width * scale));
+      const h = Math.max(1, Math.round(height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return file;
+      ctx.drawImage(src, 0, 0, w, h);
+      const blob = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob(resolve, "image/jpeg", 0.72),
+      );
+      // If re-encoding didn't actually help (e.g. an already-tiny image), keep the
+      // original so we never make a file bigger.
+      if (!blob || blob.size >= file.size) return file;
+      const base = file.name.replace(/\.[^.]+$/, "") || "photo";
+      return new File([blob], `${base}.jpg`, { type: "image/jpeg" });
+    } finally {
+      done();
     }
-    ctx.drawImage(bitmap, 0, 0, w, h);
-    bitmap.close();
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, "image/jpeg", 0.72),
-    );
-    // If re-encoding didn't actually help (e.g. an already-tiny image), keep the
-    // original so we never make a file bigger.
-    if (!blob || blob.size >= file.size) return file;
-    const base = file.name.replace(/\.[^.]+$/, "") || "photo";
-    return new File([blob], `${base}.jpg`, { type: "image/jpeg" });
   } catch {
     return file;
   }
@@ -117,7 +151,7 @@ async function shrinkForUpload(file: File): Promise<File> {
 // step against a timeout so the loop always settles and the finally block can
 // re-enable the button. The underlying request may keep going in the background;
 // we just stop waiting on it and report the failure.
-const UPLOAD_TIMEOUT_MS = 45_000;
+const UPLOAD_TIMEOUT_MS = 30_000;
 
 function withTimeout<T>(work: PromiseLike<T>, label: string): Promise<T> {
   return Promise.race([
@@ -469,11 +503,10 @@ export default function WasteLog() {
       recorded_by: session?.user?.email ?? session?.user?.id ?? null,
     };
     try {
-      const { data: inserted, error } = await supabase
-        .from("waste_log_entries")
-        .insert([payload])
-        .select("id")
-        .single();
+      const { data: inserted, error } = await withTimeout(
+        supabase.from("waste_log_entries").insert([payload]).select("id").single(),
+        "Saving waste",
+      );
       if (error) {
         setMessage(error.message);
         return;
@@ -511,7 +544,8 @@ export default function WasteLog() {
             );
             if (rowErr) {
               // Roll back the orphaned file so it isn't left without a row.
-              await supabase.storage.from("waste-photos").remove([path]);
+              // Fire-and-forget: a stalled cleanup must not re-hang the button.
+              void supabase.storage.from("waste-photos").remove([path]).catch(() => {});
               setMessage(`Photo save failed: ${rowErr.message}`);
               continue;
             }
