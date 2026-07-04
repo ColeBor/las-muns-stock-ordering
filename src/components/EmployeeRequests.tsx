@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
+import { useFormDraft } from "@/lib/useFormDraft";
 
 type Store = { id: string; name: string };
 
@@ -72,6 +73,18 @@ export default function EmployeeRequests() {
   const [complaintAgainst, setComplaintAgainst] = useState("");
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  useFormDraft({
+    key: "employee-request",
+    values: { category, complaintAgainst, description },
+    isDirty: (v) => v.description.trim() !== "" || !!v.category,
+    onRestore: (v) => {
+      if (v.category) setCategory(v.category);
+      if (v.complaintAgainst) setComplaintAgainst(v.complaintAgainst);
+      if (v.description) setDescription(v.description);
+    },
+    onRestored: () => setMessage("Restored your unsaved entry."),
+  });
 
   // Reply state per request (for Need Info replies)
   const [replyDraft, setReplyDraft] = useState<Record<string, string>>({});

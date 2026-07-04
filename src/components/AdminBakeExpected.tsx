@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
+import { useFormDraft } from "@/lib/useFormDraft";
 
 type Store = { id: string; name: string };
 
@@ -48,6 +49,16 @@ export default function AdminBakeExpected() {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+
+  useFormDraft({
+    key: "admin-bake-expected",
+    values: { drafts },
+    isDirty: (v) => Object.values(v.drafts).some((s) => String(s).trim() !== ""),
+    onRestore: (v) => {
+      if (v.drafts) setDrafts(v.drafts);
+    },
+    onRestored: () => setMessage("Restored your unsaved entries."),
+  });
 
   useEffect(() => {
     if (!isStoreManager) return;

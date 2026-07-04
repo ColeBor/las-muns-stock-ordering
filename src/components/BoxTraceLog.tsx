@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
+import { useFormDraft } from "@/lib/useFormDraft";
 
 type Store = { id: string; name: string };
 
@@ -73,6 +74,18 @@ export default function BoxTraceLog() {
   const [finishedOn, setFinishedOn] = useState<string>(todayIso());
   const [itemId, setItemId] = useState<string>("");
   const [boxPreparedOn, setBoxPreparedOn] = useState<string>("");
+
+  useFormDraft({
+    key: "box-trace",
+    values: { finishedOn, itemId, boxPreparedOn },
+    isDirty: (v) => !!v.itemId,
+    onRestore: (v) => {
+      if (v.finishedOn) setFinishedOn(v.finishedOn);
+      if (v.itemId) setItemId(v.itemId);
+      if (v.boxPreparedOn) setBoxPreparedOn(v.boxPreparedOn);
+    },
+    onRestored: () => setMessage("Restored your unsaved entry."),
+  });
 
   // History filter. Defaults to the current calendar month so the log
   // doesn't flood when permanent history grows large. Year + month are

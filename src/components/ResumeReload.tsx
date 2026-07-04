@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { hasUnsaved } from "@/lib/unsavedGuard";
 
 // Keeps a long-lived PWA session healthy. Two distinct staleness modes bite this
 // app, and each needs its own remedy.
@@ -23,8 +24,9 @@ import { supabase } from "@/lib/supabaseClient";
 //    access token still ages out and supabase-js's own refresh can be throttled
 //    or wedged. The next action then fires with a dead token and hangs. While
 //    the page is visible we proactively refresh the session on a timer so a live
-//    token is always ready; if it can't be recovered, we reload for a clean
-//    re-bootstrap.
+//    token is always ready. This never reloads — it must be safe to run while
+//    someone is mid-entry — so it can only ever keep the session alive, not
+//    discard work.
 const STALE_AFTER_MS = 10 * 60 * 1000; // hidden ≥ 10 min → reload on return
 const KEEPALIVE_MS = 4 * 60 * 1000; // refresh the session every 4 min while visible
 
@@ -44,8 +46,10 @@ export default function ResumeReload() {
       }
       // Back in the foreground. Reload only if we were gone long enough that the
       // session/bundle is likely stale — quick app-switches fall through and are
-      // handled by useAuthGate's lightweight revalidate instead.
-      if (hiddenAt !== null && Date.now() - hiddenAt >= STALE_AFTER_MS) {
+      // handled by useAuthGate's lightweight revalidate instead. Never reload
+      // over unsaved input: hold off and let the keep-alive refresh below revive
+      // the session in place, so a half-finished entry is not thrown away.
+      if (hiddenAt !== null && Date.now() - hiddenAt >= STALE_AFTER_MS && !hasUnsaved()) {
         window.location.reload();
         return;
       }
@@ -56,31 +60,20 @@ export default function ResumeReload() {
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, []);
 
-  // Mode 2: keep the token fresh while the app sits open and visible.
+  // Mode 2: keep the token fresh while the app sits open and visible. Purely
+  // additive — it refreshes and never reloads, so it is safe to fire at any
+  // moment, including mid-entry.
   useEffect(() => {
     if (typeof document === "undefined") return;
 
     let cancelled = false;
-    // Whether we last saw a live session — so we can tell "signed out on purpose"
-    // (stays null across ticks) from "session just died" (was set, now gone).
-    let hadSession: boolean | null = null;
 
     const tick = async () => {
       if (cancelled || document.visibilityState !== "visible") return;
       try {
         // getSession() returns the stored session and refreshes it if expired, so
         // an idle-but-open tab keeps a valid access token ready for the next call.
-        const { data } = await supabase.auth.getSession();
-        if (cancelled) return;
-        const alive = !!data.session;
-        // We had a session and now it's gone → the refresh token is dead. Reload
-        // to re-bootstrap cleanly (restores it if still valid, else routes to the
-        // login screen) rather than leaving the next request to hang.
-        if (hadSession && !alive) {
-          window.location.reload();
-          return;
-        }
-        hadSession = alive;
+        await supabase.auth.getSession();
       } catch {
         // Swallow — the auth gate's own safety timers and the client's fetch
         // timeouts still keep the UI from hanging.

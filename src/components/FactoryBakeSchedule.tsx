@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
 import { formatLocalDate } from "@/lib/dateOnly";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
+import { useFormDraft } from "@/lib/useFormDraft";
 
 const EMPANADAS_PER_BOX = 30;
 
@@ -33,6 +34,19 @@ export default function FactoryBakeSchedule() {
   const [savingItemId, setSavingItemId] = useState<string | null>(null);
   const [confirmingItemId, setConfirmingItemId] = useState<string | null>(null);
   const [suggesting, setSuggesting] = useState(false);
+
+  useFormDraft({
+    key: "factory-bake-schedule",
+    values: { plannedDrafts, confirmDrafts },
+    isDirty: (v) =>
+      Object.values(v.plannedDrafts).some((s) => String(s).trim() !== "") ||
+      Object.values(v.confirmDrafts).some((s) => String(s).trim() !== ""),
+    onRestore: (v) => {
+      if (v.plannedDrafts) setPlannedDrafts(v.plannedDrafts);
+      if (v.confirmDrafts) setConfirmDrafts(v.confirmDrafts);
+    },
+    onRestored: () => setMessage("Restored your unsaved entries."),
+  });
 
   const load = useCallback(async () => {
     if (!canManage) return;

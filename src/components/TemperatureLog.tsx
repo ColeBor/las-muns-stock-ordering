@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
+import { useFormDraft } from "@/lib/useFormDraft";
 
 type Store = {
   id: string;
@@ -90,6 +91,19 @@ export default function TemperatureLog() {
   const [newFridgeKind, setNewFridgeKind] = useState<"fridge" | "freezer">("fridge");
   const [savingKindId, setSavingKindId] = useState<string | null>(null);
   const [deletingFridgeId, setDeletingFridgeId] = useState<string | null>(null);
+
+  useFormDraft({
+    key: "temperature-log",
+    values: { draftTemps, draftNotes },
+    isDirty: (v) =>
+      Object.values(v.draftTemps).some((s) => String(s).trim() !== "") ||
+      Object.values(v.draftNotes).some((s) => String(s).trim() !== ""),
+    onRestore: (v) => {
+      if (v.draftTemps) setDraftTemps(v.draftTemps);
+      if (v.draftNotes) setDraftNotes(v.draftNotes);
+    },
+    onRestored: () => setMessage("Restored your unsaved entries."),
+  });
 
   const hasAssignedStore = useMemo(() => !!profile?.store_id, [profile]);
   const effectiveStoreId = useMemo(

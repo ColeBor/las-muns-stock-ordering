@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
+import { useFormDraft } from "@/lib/useFormDraft";
 
 type Ingredient = {
   id: string;
@@ -27,6 +28,19 @@ export default function Ingredients() {
   const [onHand, setOnHand] = useState("");
   const [threshold, setThreshold] = useState("");
   const [adding, setAdding] = useState(false);
+
+  useFormDraft({
+    key: "ingredients-new",
+    values: { name, unit, onHand, threshold },
+    isDirty: (v) => v.name.trim() !== "",
+    onRestore: (v) => {
+      if (v.name) setName(v.name);
+      if (v.unit) setUnit(v.unit);
+      if (v.onHand) setOnHand(v.onHand);
+      if (v.threshold) setThreshold(v.threshold);
+    },
+    onRestored: () => setMessage("Restored your unsaved entry."),
+  });
 
   // Inline on-hand editing — keyed by id.
   const [qtyDrafts, setQtyDrafts] = useState<Record<string, string>>({});

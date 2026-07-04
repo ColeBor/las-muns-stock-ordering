@@ -5,6 +5,7 @@ import type { FormEvent } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
+import { useFormDraft } from "@/lib/useFormDraft";
 import { AgGridReact } from "@/lib/agGrid";
 import type { ColDef } from "ag-grid-community";
 
@@ -58,6 +59,34 @@ export default function AdminItemsList({
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
+
+  useFormDraft({
+    key: "admin-item-new",
+    values: {
+      name,
+      supplierId,
+      subCategory,
+      packagingType,
+      packQty,
+      isServeable,
+      trackFactoryStock,
+      costPerUnit,
+      retailPricePerUnit,
+    },
+    isDirty: (v) => v.name.trim() !== "",
+    onRestore: (v) => {
+      if (v.name) setName(v.name);
+      if (v.supplierId) setSupplierId(v.supplierId);
+      if (v.subCategory) setSubCategory(v.subCategory);
+      if (v.packagingType) setPackagingType(v.packagingType);
+      if (v.packQty) setPackQty(v.packQty);
+      if (typeof v.isServeable === "boolean") setIsServeable(v.isServeable);
+      if (typeof v.trackFactoryStock === "boolean") setTrackFactoryStock(v.trackFactoryStock);
+      if (v.costPerUnit) setCostPerUnit(v.costPerUnit);
+      if (v.retailPricePerUnit) setRetailPricePerUnit(v.retailPricePerUnit);
+    },
+    onRestored: () => setMessage("Restored your unsaved entry."),
+  });
 
   const canManage = isStoreManager;
 

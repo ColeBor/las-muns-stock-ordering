@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
+import { useFormDraft } from "@/lib/useFormDraft";
 
 type Store = { id: string; name: string };
 type Kind = "manual" | "weekly" | "date";
@@ -65,6 +66,25 @@ export default function AdminAnnouncements() {
   const [targetStoreIds, setTargetStoreIds] = useState<string[]>([]);
   const [pinnedUntil, setPinnedUntil] = useState("");
   const [saving, setSaving] = useState(false);
+
+  useFormDraft({
+    key: "admin-announcement",
+    values: { kind, title, body, startsOn, expiresOn, dayOfWeek, onDate, allStores, pinnedUntil, targetStoreIds },
+    isDirty: (v) => v.title.trim() !== "" || v.body.trim() !== "",
+    onRestore: (v) => {
+      if (v.kind) setKind(v.kind);
+      if (v.title) setTitle(v.title);
+      if (v.body) setBody(v.body);
+      if (v.startsOn) setStartsOn(v.startsOn);
+      if (v.expiresOn) setExpiresOn(v.expiresOn);
+      if (typeof v.dayOfWeek === "number") setDayOfWeek(v.dayOfWeek);
+      if (v.onDate) setOnDate(v.onDate);
+      if (typeof v.allStores === "boolean") setAllStores(v.allStores);
+      if (v.pinnedUntil) setPinnedUntil(v.pinnedUntil);
+      if (v.targetStoreIds) setTargetStoreIds(v.targetStoreIds);
+    },
+    onRestored: () => setMessage("Restored your unsaved entry."),
+  });
 
   useEffect(() => {
     if (!isStoreManager) return;

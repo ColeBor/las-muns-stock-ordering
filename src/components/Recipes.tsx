@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
+import { useFormDraft } from "@/lib/useFormDraft";
 
 const EMPANADAS_PER_BOX = 30;
 
@@ -31,6 +32,18 @@ export default function Recipes() {
   const [addingLine, setAddingLine] = useState(false);
   const [lineQtyDrafts, setLineQtyDrafts] = useState<Record<string, string>>({});
   const [savingLineId, setSavingLineId] = useState<string | null>(null);
+
+  useFormDraft({
+    key: "recipes-new",
+    values: { selectedItemId, newIngredientId, newQty },
+    isDirty: (v) => !!v.newIngredientId || v.newQty.trim() !== "",
+    onRestore: (v) => {
+      if (v.selectedItemId) setSelectedItemId(v.selectedItemId);
+      if (v.newIngredientId) setNewIngredientId(v.newIngredientId);
+      if (v.newQty) setNewQty(v.newQty);
+    },
+    onRestored: () => setMessage("Restored your unsaved entry."),
+  });
 
   const load = useCallback(async () => {
     if (!canManage) return;

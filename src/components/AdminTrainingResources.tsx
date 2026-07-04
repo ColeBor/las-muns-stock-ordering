@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
+import { useFormDraft } from "@/lib/useFormDraft";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
 
 type Store = { id: string; name: string };
@@ -54,6 +55,22 @@ export default function AdminTrainingResources() {
   const [sourceUrl, setSourceUrl] = useState("");
   const [assignToStoreIds, setAssignToStoreIds] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
+
+  useFormDraft({
+    key: "admin-training-resource",
+    values: { title, description, kind, sourceType, sourceUrl, assignToStoreIds },
+    isDirty: (v) =>
+      v.title.trim() !== "" || v.description.trim() !== "" || v.sourceUrl.trim() !== "",
+    onRestore: (v) => {
+      if (v.title) setTitle(v.title);
+      if (v.description) setDescription(v.description);
+      if (v.kind) setKind(v.kind);
+      if (v.sourceType) setSourceType(v.sourceType);
+      if (v.sourceUrl) setSourceUrl(v.sourceUrl);
+      setAssignToStoreIds(v.assignToStoreIds);
+    },
+    onRestored: () => setMessage("Restored your unsaved entry."),
+  });
 
   // Per-row assignment editing
   const [editingAssignmentsId, setEditingAssignmentsId] = useState<string | null>(null);

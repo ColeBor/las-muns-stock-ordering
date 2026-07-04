@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
+import { useFormDraft } from "@/lib/useFormDraft";
 
 type Store = {
   id: string;
@@ -195,6 +196,23 @@ export default function WasteLog() {
   useEffect(() => {
     fetch("/api/waste-photos/cleanup", { method: "POST" }).catch(() => {});
   }, []);
+
+  // Persist the typed entry so a reload/refresh (or the app's own stale-session
+  // auto-recovery) never loses it. Photos can't be persisted (File objects don't
+  // survive a reload) but re-taking one is cheap; the typed fields are what hurt.
+  useFormDraft({
+    key: "waste-log",
+    values: { wastedOn, itemId, quantity, reason, reasonOther },
+    isDirty: (v) => !!v.itemId || !!v.reason || v.reasonOther.trim() !== "" || v.quantity !== "1",
+    onRestore: (v) => {
+      if (v.wastedOn) setWastedOn(v.wastedOn);
+      if (v.itemId) setItemId(v.itemId);
+      if (v.quantity) setQuantity(v.quantity);
+      if (v.reason) setReason(v.reason);
+      if (v.reasonOther) setReasonOther(v.reasonOther);
+    },
+    onRestored: () => setMessage("Restored your unsaved entry."),
+  });
 
   const hasAssignedStore = useMemo(() => !!profile?.store_id, [profile]);
   const effectiveStoreId = useMemo(
@@ -503,6 +521,11 @@ export default function WasteLog() {
       recorded_by: session?.user?.email ?? session?.user?.id ?? null,
     };
     try {
+      // Make sure the access token is fresh before writing. After the app has
+      // sat idle the token may have expired; getSession() refreshes it first so
+      // the insert doesn't fail (or hang) on a dead token. The draft is already
+      // autosaved, so even if this can't recover, nothing typed is lost.
+      await withTimeout(supabase.auth.getSession(), "Session check");
       const { data: inserted, error } = await withTimeout(
         supabase.from("waste_log_entries").insert([payload]).select("id").single(),
         "Saving waste",

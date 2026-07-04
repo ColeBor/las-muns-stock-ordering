@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
+import { useFormDraft } from "@/lib/useFormDraft";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
 
 // Recently-due orders linger this long so staff still see one they're actively
@@ -253,6 +254,18 @@ function OtterStoreMapping() {
   const [label, setLabel] = useState("");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+
+  useFormDraft({
+    key: "otter-store-mapping",
+    values: { otterId, storeId, label },
+    isDirty: (v) => v.otterId.trim() !== "" || v.label.trim() !== "",
+    onRestore: (v) => {
+      if (v.otterId) setOtterId(v.otterId);
+      if (v.storeId) setStoreId(v.storeId);
+      if (v.label) setLabel(v.label);
+    },
+    onRestored: () => setMessage("Restored your unsaved entry."),
+  });
 
   const reload = useCallback(async () => {
     const [storesRes, linksRes] = await Promise.all([
