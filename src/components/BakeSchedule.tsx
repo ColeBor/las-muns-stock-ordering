@@ -53,10 +53,35 @@ export default function BakeSchedule() {
   const [savingBakeMore, setSavingBakeMore] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  // The closing shift always bakes for the NEXT day, so the counts shown are
-  // tomorrow's. Not editable — this is purely "what to bake tonight/morning".
-  const bakeForDate = tomorrowIso();
   const today = todayIso();
+
+  // Total expected bake across all items for each day_of_week (0=Sun..6=Sat),
+  // so we can skip days the store bakes nothing on.
+  const expectedTotalByDow = useMemo(() => {
+    const totals: Record<number, number> = {};
+    for (const e of expected) {
+      totals[e.day_of_week] = (totals[e.day_of_week] ?? 0) + e.expected_qty;
+    }
+    return totals;
+  }, [expected]);
+
+  // The closing shift bakes for the NEXT day the store actually bakes. Start at
+  // tomorrow and skip any day with nothing to bake (0 expected) — so a store
+  // closed Sat/Sun rolls Friday straight to Monday, with no per-store config
+  // needed. Falls back to tomorrow before the expected data has loaded (or if
+  // every day is zero), since there's nothing better to show.
+  const bakeForDate = useMemo(() => {
+    const base = new Date();
+    for (let offset = 1; offset <= 7; offset++) {
+      const d = new Date(base);
+      d.setDate(base.getDate() + offset);
+      if ((expectedTotalByDow[d.getDay()] ?? 0) > 0) {
+        const tzOffsetMs = d.getTimezoneOffset() * 60 * 1000;
+        return new Date(d.getTime() - tzOffsetMs).toISOString().slice(0, 10);
+      }
+    }
+    return tomorrowIso();
+  }, [expectedTotalByDow]);
 
   const hasAssignedStore = useMemo(() => !!profile?.store_id, [profile]);
   const effectiveStoreId = useMemo(
