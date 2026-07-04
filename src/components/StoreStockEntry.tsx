@@ -445,9 +445,20 @@ export default function StoreStockEntry() {
           entered_by: session?.user?.email ?? session?.user?.id,
         };
 
-        const { error } = await supabase
+        let { error } = await supabase
           .from("stock_entries")
           .upsert([payload], { onConflict: "cycle_id,store_id,item_id" });
+
+        // A failure here reverts the cell (see catch), erasing what the worker
+        // just typed. The usual cause is a token that expired while the app sat
+        // idle. Refresh the session and retry once before giving up so a stale
+        // session can't wipe the count.
+        if (error) {
+          await supabase.auth.getSession();
+          ({ error } = await supabase
+            .from("stock_entries")
+            .upsert([payload], { onConflict: "cycle_id,store_id,item_id" }));
+        }
 
         if (error) throw error;
 
