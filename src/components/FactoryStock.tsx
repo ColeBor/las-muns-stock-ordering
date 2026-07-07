@@ -720,6 +720,10 @@ export default function FactoryStock() {
             <AgGridReact
               rowData={gridData}
               columnDefs={columnDefs}
+              // Stable row identity so rebuilding rowData after a save does an
+              // in-place delta update instead of resetting the grid — keeps the
+              // worker's scroll position instead of jumping to the top.
+              getRowId={(p) => p.data.item_id}
               defaultColDef={{
                 resizable: true,
                 sortable: true,

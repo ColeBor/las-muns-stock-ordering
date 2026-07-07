@@ -2739,6 +2739,9 @@ function AllocationsTab({
         <AgGridReact<AllocationRow>
           rowData={rows}
           columnDefs={columnDefs}
+          // Stable row identity so reloading after an override does a delta
+          // update instead of resetting the grid scroll to the top.
+          getRowId={(p) => `${p.data.store_id}|${p.data.item_id}`}
           defaultColDef={{ resizable: true, sortable: true, filter: true, minWidth: 80 }}
           isExternalFilterPresent={isExternalFilterPresent}
           doesExternalFilterPass={doesExternalFilterPass}

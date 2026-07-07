@@ -601,6 +601,9 @@ function StoreItemsTab({ storeId }: { storeId: string }) {
         <AgGridReact
           rowData={rows}
           columnDefs={columnDefs}
+          // Stable row identity so editing a capacity does a delta update
+          // instead of rebuilding the grid and jumping the scroll to the top.
+          getRowId={(p) => p.data.item_id}
           defaultColDef={{ resizable: true, sortable: true, filter: true, minWidth: 80 }}
           pagination
           paginationPageSize={20}
