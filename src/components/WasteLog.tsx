@@ -521,15 +521,17 @@ export default function WasteLog() {
       recorded_by: session?.user?.email ?? session?.user?.id ?? null,
     };
     try {
-      // Make sure the access token is fresh before writing. After the app has
-      // sat idle the token may have expired; getSession() refreshes it first so
-      // the insert doesn't fail (or hang) on a dead token. The draft is already
-      // autosaved, so even if this can't recover, nothing typed is lost.
-      await withTimeout(supabase.auth.getSession(), "Session check");
-      const { data: inserted, error } = await withTimeout(
-        supabase.from("waste_log_entries").insert([payload]).select("id").single(),
-        "Saving waste",
-      );
+      // Plain insert, same as every other log: the shared client already caps
+      // each request (10s REST, 30s auth) and refreshes an expired token on the
+      // fly, so a slow-but-valid save completes instead of being cut off. (An
+      // earlier explicit getSession()/withTimeout here raced the auth refresh
+      // and surfaced a spurious "check your connection".) The draft is autosaved
+      // regardless, so nothing typed is lost.
+      const { data: inserted, error } = await supabase
+        .from("waste_log_entries")
+        .insert([payload])
+        .select("id")
+        .single();
       if (error) {
         setMessage(error.message);
         return;
