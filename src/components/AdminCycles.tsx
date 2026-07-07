@@ -474,7 +474,7 @@ export default function AdminCycles() {
                   stores={stores}
                   storesInOtherOpenCycles={storesInOtherOpenCycles}
                   loading={loading}
-                  readOnly={selectedCycle.status === "delivered"}
+                  readOnly={selectedCycle.status === "delivered" || selectedCycle.status === "finalized"}
                   setOrderDate={setOrderDate}
                   setSelectedStoreIds={setSelectedStoreIds}
                   onSubmit={handleSubmit}
@@ -1858,7 +1858,10 @@ function AllocationsTab({
   >("all");
   const gridApiRef = useRef<GridApi<AllocationRow> | null>(null);
   const isDelivered = cycleStatus === "delivered";
-  const readOnly = isDelivered;
+  const isFinalized = cycleStatus === "finalized";
+  // Finalized locks the plan: no re-run and no override edits (they'd need a
+  // re-run to apply, which is blocked). Unlock from the Deliveries tab to edit.
+  const readOnly = isDelivered || isFinalized;
 
   const { showForm, editingKey, storeId, itemId, qty, reason, mode } = overrideDraft;
   const patchDraft = (patch: Partial<OverrideDraft>) =>
@@ -2620,15 +2623,27 @@ function AllocationsTab({
         </p>
         <button
           onClick={runAllocations}
-          disabled={running || isDelivered}
+          disabled={running || isDelivered || isFinalized}
           className="shrink-0 px-4 py-2 bg-emerald-500 text-slate-950 rounded-full font-semibold disabled:opacity-50"
-          title={isDelivered ? "This cycle is already delivered." : undefined}
+          title={
+            isDelivered
+              ? "This cycle is already delivered."
+              : isFinalized
+                ? "Delivery is finalized (locked). Unlock it under Deliveries to re-run."
+                : undefined
+          }
         >
-          {running ? "Running..." : needsRerun ? "Re-run allocations" : "Run allocations"}
+          {running
+            ? "Running..."
+            : isFinalized
+              ? "Finalized 🔒"
+              : needsRerun
+                ? "Re-run allocations"
+                : "Run allocations"}
         </button>
       </div>
 
-      {needsRerun && !running && !isDelivered && (
+      {needsRerun && !running && !isDelivered && !isFinalized && (
         <div className="rounded-2xl bg-amber-950/60 border border-amber-500/30 px-4 py-3 text-sm text-amber-200">
           {stockStale
             ? "Store or factory stock has changed since the last run — these allocations are out of date."
@@ -3152,18 +3167,60 @@ function DeliveriesTab({
   };
 
   const isAllocated = cycleStatus === "allocated";
+  const isFinalized = cycleStatus === "finalized";
   const isDelivered = cycleStatus === "delivered";
   const hasOrderDate = !!cycleOrderDate;
-  const canMarkDelivered = isAllocated && hasOrderDate && !isDelivered;
+
+  // Finalize is the lock step: it must come before Delivered.
+  const canFinalize = isAllocated && hasOrderDate && !isDelivered;
+  const finalizeTitle = isDelivered
+    ? "Already delivered."
+    : isFinalized
+      ? "Already finalized."
+      : !isAllocated
+        ? "Run allocations first."
+        : !hasOrderDate
+          ? "Set an order date first."
+          : undefined;
+
+  // Delivered now requires the delivery to be finalized (locked) first.
+  const canMarkDelivered = isFinalized && !isDelivered;
   const markDeliveredTitle = isDelivered
     ? "Already delivered."
-    : !isAllocated
-      ? "Run allocations first."
-      : !hasOrderDate
-        ? "Set an order date first."
-        : undefined;
+    : !isFinalized
+      ? "Finalize the delivery first."
+      : undefined;
 
   const cycleDateLabel = formatLocalDate(cycleOrderDate, "Not set");
+
+  const finalize = async (lock: boolean) => {
+    setMarking(true);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/allocations/lock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cycle_id: cycleId, locked: lock }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setMessage(`Error: ${data.error}`);
+        return;
+      }
+      await onFinalized();
+      if (lock) {
+        // Auto-download the delivery manifest the crew loads from.
+        await exportPdf();
+        setMessage("✅ Delivery finalized — the plan is locked and the PDF has downloaded.");
+      } else {
+        setMessage("Delivery unlocked — allocations can be re-run again.");
+      }
+    } catch (err) {
+      setMessage(`Error: ${err instanceof Error ? err.message : "Unknown"}`);
+    } finally {
+      setMarking(false);
+    }
+  };
 
   const markDelivered = async () => {
     if (!canMarkDelivered) return;
@@ -3208,16 +3265,47 @@ function DeliveriesTab({
             </>
           )}
         </div>
-        <button
-          type="button"
-          onClick={markDelivered}
-          disabled={!canMarkDelivered || marking}
-          title={markDeliveredTitle}
-          className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {marking ? "Marking..." : isDelivered ? "Delivered ✓" : "Mark delivered"}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {!isFinalized && !isDelivered && (
+            <button
+              type="button"
+              onClick={() => finalize(true)}
+              disabled={!canFinalize || marking}
+              title={finalizeTitle}
+              className="rounded-full bg-amber-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {marking ? "Working..." : "Finalize delivery"}
+            </button>
+          )}
+          {isFinalized && !isDelivered && (
+            <button
+              type="button"
+              onClick={() => finalize(false)}
+              disabled={marking}
+              title="Unlock to re-run allocations."
+              className="rounded-full border border-white/15 bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:bg-slate-700 disabled:opacity-50"
+            >
+              {marking ? "Working..." : "Unlock"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={markDelivered}
+            disabled={!canMarkDelivered || marking}
+            title={markDeliveredTitle}
+            className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {marking ? "Marking..." : isDelivered ? "Delivered ✓" : "Mark delivered"}
+          </button>
+        </div>
       </div>
+
+      {isFinalized && (
+        <div className="rounded-2xl border border-amber-500/30 bg-amber-950/50 px-4 py-3 text-sm text-amber-200">
+          🔒 Delivery is <strong>finalized</strong> — the plan is locked and won&apos;t
+          auto-change. Re-download the PDF below if needed, then mark it delivered.
+        </div>
+      )}
 
       {deliveryRows.length > 0 && categories.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-slate-950/40 p-3">

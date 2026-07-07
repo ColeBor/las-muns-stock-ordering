@@ -85,9 +85,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "cycle_id is required" }, { status: 400 });
   }
 
-  // Block re-running on a delivered cycle. The factory_counts have already
-  // been decremented by the delivery step; recomputing allocations would
-  // invalidate that decrement and break the audit trail.
+  // Block re-running once the cycle is locked. A 'finalized' cycle has had its
+  // delivery PDF printed and the truck loaded — recomputing would make the
+  // digital plan diverge from what's physically loaded. A 'delivered' cycle is
+  // already closed. Either way, recomputing would break the audit trail.
   const { data: cycleStatusRow, error: statusErr } = await supabaseAdmin
     .from("order_cycles")
     .select("status")
@@ -99,9 +100,14 @@ export async function POST(request: NextRequest) {
       { status: 404 },
     );
   }
-  if (cycleStatusRow.status === "delivered") {
+  if (cycleStatusRow.status === "finalized" || cycleStatusRow.status === "delivered") {
     return NextResponse.json(
-      { error: "Cycle is delivered — cannot re-run allocations" },
+      {
+        error:
+          cycleStatusRow.status === "finalized"
+            ? "Delivery is finalized (locked) — unlock it to re-run allocations"
+            : "Cycle is delivered — cannot re-run allocations",
+      },
       { status: 400 },
     );
   }
