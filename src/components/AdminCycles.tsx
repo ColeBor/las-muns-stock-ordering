@@ -10,6 +10,7 @@ import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
 import { AgGridReact } from "@/lib/agGrid";
 import type {
   CellClassParams,
+  CellValueChangedEvent,
   ColDef,
   GridApi,
   GridReadyEvent,
@@ -2919,6 +2920,7 @@ type DeliveryAllocation = {
 };
 
 type DeliveryRow = {
+  item_id: string;
   type: string;
   sub_category: string;
   item_name: string;
@@ -2999,6 +3001,7 @@ function DeliveriesTab({
   const { storeColumns, deliveryRows } = useMemo(() => {
     const positive = allocations.filter((a) => a.qty > 0);
     type ItemAcc = {
+      item_id: string;
       type: string;
       sub_category: string;
       item_name: string;
@@ -3014,6 +3017,7 @@ function DeliveriesTab({
 
       if (!items.has(a.item_id)) {
         items.set(a.item_id, {
+          item_id: a.item_id,
           type,
           sub_category: sub,
           item_name: itemName,
@@ -3037,6 +3041,7 @@ function DeliveriesTab({
     });
     const rows: DeliveryRow[] = sortedItems.map((acc) => {
       const row: DeliveryRow = {
+        item_id: acc.item_id,
         type: acc.type,
         sub_category: acc.sub_category,
         item_name: acc.item_name,
@@ -3089,9 +3094,54 @@ function DeliveriesTab({
         valueFormatter: dimZeros,
         cellStyle: numericCellStyle,
         cellClass: cellClassZero,
+        // Delivery numbers are hand-correctable only while finalized (locked
+        // from auto-changes, before Delivered) — so the digital plan can be made
+        // to match what actually went on the truck.
+        editable: cycleStatus === "finalized",
+        cellEditor: "agNumberCellEditor",
+        cellEditorParams: { min: 0, precision: 0 },
       })),
     ];
-  }, [storeColumns]);
+  }, [storeColumns, cycleStatus]);
+
+  // Persist a hand-edited delivery cell to the allocation (cycle, store, item).
+  // The store carry-forward reads allocations.qty, so editing here flows straight
+  // into each store's next-cycle opening count. Only reachable while finalized.
+  const handleDeliveryCellChanged = async (params: CellValueChangedEvent<DeliveryRow>) => {
+    const storeId = params.colDef.field;
+    const itemId = params.data.item_id;
+    if (!storeId || !itemId || params.newValue === params.oldValue) return;
+    const qty = Math.trunc(Number(params.newValue));
+    if (!Number.isFinite(qty) || qty < 0) {
+      setMessage("Delivery qty must be a whole number of boxes (0 or more).");
+      params.node.setDataValue(storeId, params.oldValue);
+      return;
+    }
+    setMessage(null);
+    const payload = {
+      cycle_id: cycleId,
+      store_id: storeId,
+      item_id: itemId,
+      qty,
+      source: "manual_override",
+      shortfall: 0,
+      overdraft: 0,
+    };
+    let { error } = await supabase
+      .from("allocations")
+      .upsert([payload], { onConflict: "cycle_id,store_id,item_id" });
+    if (error) {
+      // Token may have expired while idle — refresh and retry once.
+      await supabase.auth.getSession();
+      ({ error } = await supabase
+        .from("allocations")
+        .upsert([payload], { onConflict: "cycle_id,store_id,item_id" }));
+    }
+    if (error) {
+      setMessage(`Couldn't save delivery change: ${error.message}`);
+      params.node.setDataValue(storeId, params.oldValue);
+    }
+  };
 
   // Category picker + PDF export — the same delivery sheet as the demand-by-store
   // export, but built from the finalised per-store allocations, so it includes
@@ -3337,6 +3387,13 @@ function DeliveriesTab({
 
       {message && <p className="text-sm text-cyan-300">{message}</p>}
 
+      {isFinalized && !isDelivered && (
+        <p className="text-xs text-slate-500">
+          Tap a store cell to adjust what that store actually receives before marking it
+          delivered — the change flows straight into that store&apos;s stock.
+        </p>
+      )}
+
       {/* Always render the grid container so switching to this tab doesn't
           cause a height-shift / scroll jump while allocations are still
           loading. AG Grid shows its own "No rows" placeholder when the
@@ -3345,6 +3402,11 @@ function DeliveriesTab({
         <AgGridReact
           rowData={deliveryRows}
           columnDefs={columnDefs}
+          // Stable row identity keeps the scroll/edit position when a save
+          // reloads the grid (see StoreStockEntry).
+          getRowId={(p) => p.data.item_id}
+          onCellValueChanged={handleDeliveryCellChanged}
+          stopEditingWhenCellsLoseFocus={true}
           defaultColDef={{ resizable: true, sortable: true, filter: true, minWidth: 80 }}
         />
       </div>
