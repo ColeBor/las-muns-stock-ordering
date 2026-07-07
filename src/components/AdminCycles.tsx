@@ -1829,6 +1829,20 @@ function AllocationsTab({
   const [items, setItems] = useState<
     Array<{ id: string; name: string; supplier_name: string | null }>
   >([]);
+  // Inputs for the "stock changed since the last run" staleness check.
+  const [stockEntries, setStockEntries] = useState<
+    Array<{ store_id: string; item_id: string; current_count: number }>
+  >([]);
+  const [capacities, setCapacities] = useState<
+    Array<{ store_id: string; item_id: string; capacity: number }>
+  >([]);
+  const [cycleStoreIds, setCycleStoreIds] = useState<Set<string>>(new Set());
+  const [factoryInventory, setFactoryInventory] = useState<
+    Array<{ factory_id: string; item_id: string; on_hand_qty: number }>
+  >([]);
+  const [factorySnapshot, setFactorySnapshot] = useState<
+    Array<{ factory_id: string; item_id: string; available_qty: number }>
+  >([]);
   const [running, setRunning] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [formLoading, setFormLoading] = useState(false);
@@ -1860,7 +1874,17 @@ function AllocationsTab({
   const reloadTokenRef = useRef(0);
   const reload = useCallback(async () => {
     const myToken = ++reloadTokenRef.current;
-    const [allocRes, overrideRes, storesRes, itemsRes] = await Promise.all([
+    const [
+      allocRes,
+      overrideRes,
+      storesRes,
+      itemsRes,
+      stockRes,
+      capRes,
+      cycleStoresRes,
+      factInvRes,
+      factSnapRes,
+    ] = await Promise.all([
       supabase
         .from("allocations")
         .select(
@@ -1876,9 +1900,27 @@ function AllocationsTab({
         .from("items")
         .select("id,name,suppliers(name)")
         .order("name"),
+      // Staleness inputs: current store stock, capacities, cycle membership,
+      // live factory stock, and the factory snapshot the last run took.
+      supabase.from("stock_entries").select("store_id,item_id,current_count").eq("cycle_id", cycleId),
+      supabase.from("store_items").select("store_id,item_id,capacity").eq("is_active", true),
+      supabase.from("cycle_stores").select("store_id").eq("cycle_id", cycleId),
+      supabase.from("factory_inventory").select("factory_id,item_id,on_hand_qty"),
+      supabase.from("factory_counts").select("factory_id,item_id,available_qty").eq("cycle_id", cycleId),
     ]);
 
     if (myToken !== reloadTokenRef.current) return; // stale, ignore
+
+    if (stockRes.data)
+      setStockEntries(stockRes.data as Array<{ store_id: string; item_id: string; current_count: number }>);
+    if (capRes.data)
+      setCapacities(capRes.data as Array<{ store_id: string; item_id: string; capacity: number }>);
+    if (cycleStoresRes.data)
+      setCycleStoreIds(new Set((cycleStoresRes.data as Array<{ store_id: string }>).map((r) => r.store_id)));
+    if (factInvRes.data)
+      setFactoryInventory(factInvRes.data as Array<{ factory_id: string; item_id: string; on_hand_qty: number }>);
+    if (factSnapRes.data)
+      setFactorySnapshot(factSnapRes.data as Array<{ factory_id: string; item_id: string; available_qty: number }>);
 
     if (allocRes.error) {
       // eslint-disable-next-line no-console
@@ -1941,6 +1983,9 @@ function AllocationsTab({
     [
       { table: "allocations", filter: `cycle_id=eq.${cycleId}` },
       { table: "allocation_overrides", filter: `cycle_id=eq.${cycleId}` },
+      // So the "stock changed since the last run" flag lights up live.
+      { table: "stock_entries", filter: `cycle_id=eq.${cycleId}` },
+      { table: "factory_inventory" },
     ],
     reload,
     `cycle-${cycleId}-allocations`,
@@ -2151,6 +2196,61 @@ function AllocationsTab({
     }
     return false;
   }, [allocations, overrides]);
+
+  // "Stock changed since the last run" — the saved allocations no longer reflect
+  // current store or factory stock, so they should be re-run. Only meaningful
+  // once a run exists (status 'allocated'); before that it's a first Run, not a
+  // re-run. Mirrors the allocation engine: demand = max(0, capacity - on-hand),
+  // and the factory_counts snapshot the run stored.
+  const stockStale = useMemo(() => {
+    if (cycleStatus !== "allocated") return false;
+
+    // Factory: live on-hand vs the snapshot the last run took (factory_counts).
+    const snap = new Map<string, number>();
+    factorySnapshot.forEach((f) => snap.set(`${f.factory_id}|${f.item_id}`, f.available_qty));
+    const live = new Map<string, number>();
+    factoryInventory.forEach((f) => live.set(`${f.factory_id}|${f.item_id}`, f.on_hand_qty));
+    if (snap.size !== live.size) return true;
+    for (const [k, v] of live) {
+      if (snap.get(k) !== v) return true;
+    }
+
+    // Store: does current demand still match what was allocated? For a
+    // non-override row, qty + shortfall always equals the demand it was built
+    // from, so any mismatch means the store's stock moved since the run.
+    const capByKey = new Map<string, number>();
+    capacities.forEach((c) => {
+      if (cycleStoreIds.has(c.store_id)) capByKey.set(`${c.store_id}|${c.item_id}`, c.capacity);
+    });
+    const countByKey = new Map<string, number>();
+    stockEntries.forEach((s) => countByKey.set(`${s.store_id}|${s.item_id}`, s.current_count));
+    const overrideKeys = new Set(overrides.map((o) => `${o.store_id}|${o.item_id}`));
+    const allocKeys = new Set(allocations.map((a) => `${a.store_id}|${a.item_id}`));
+
+    for (const a of allocations) {
+      if (a.source === "manual_override") continue; // handled by pendingRerun
+      const key = `${a.store_id}|${a.item_id}`;
+      const demand = Math.max(0, (capByKey.get(key) ?? 0) - (countByKey.get(key) ?? 0));
+      if (a.qty + a.shortfall !== demand) return true;
+    }
+    // New demand that has no allocation row yet (and isn't overridden).
+    for (const [key, cap] of capByKey) {
+      if (allocKeys.has(key) || overrideKeys.has(key)) continue;
+      if (Math.max(0, cap - (countByKey.get(key) ?? 0)) > 0) return true;
+    }
+    return false;
+  }, [
+    cycleStatus,
+    factorySnapshot,
+    factoryInventory,
+    capacities,
+    cycleStoreIds,
+    stockEntries,
+    overrides,
+    allocations,
+  ]);
+
+  const needsRerun = pendingRerun || stockStale;
 
   const runAllocations = async () => {
     setRunning(true);
@@ -2524,14 +2624,16 @@ function AllocationsTab({
           className="shrink-0 px-4 py-2 bg-emerald-500 text-slate-950 rounded-full font-semibold disabled:opacity-50"
           title={isDelivered ? "This cycle is already delivered." : undefined}
         >
-          {running ? "Running..." : pendingRerun ? "Re-run allocations" : "Run allocations"}
+          {running ? "Running..." : needsRerun ? "Re-run allocations" : "Run allocations"}
         </button>
       </div>
 
-      {pendingRerun && !running && !isDelivered && (
+      {needsRerun && !running && !isDelivered && (
         <div className="rounded-2xl bg-amber-950/60 border border-amber-500/30 px-4 py-3 text-sm text-amber-200">
-          Manual changes haven&apos;t been applied yet. Click{" "}
-          <strong>Re-run allocations</strong> to update.
+          {stockStale
+            ? "Store or factory stock has changed since the last run — these allocations are out of date."
+            : "Manual changes haven't been applied yet."}{" "}
+          Click <strong>Re-run allocations</strong> to update.
         </div>
       )}
 
