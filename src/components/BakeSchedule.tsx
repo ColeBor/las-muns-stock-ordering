@@ -50,7 +50,6 @@ export default function BakeSchedule() {
   // recorded for today, so re-submitting just syncs the difference.
   const [bakeMoreChecked, setBakeMoreChecked] = useState<Record<string, boolean>>({});
   const [recordedToday, setRecordedToday] = useState<Set<string>>(new Set());
-  const [savingBakeMore, setSavingBakeMore] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const today = todayIso();
@@ -213,52 +212,60 @@ export default function BakeSchedule() {
     return map;
   }, [expected, dayOfWeek]);
 
-  const handleSubmitBakeMore = async () => {
+  // Auto-save each flavour the moment it's tapped — no submit button. The chip
+  // highlights optimistically and the signal is written straight to
+  // bake_more_signals (keyed to today), so it stays highlighted across reloads
+  // for the rest of the day and clears itself on the next day (loadSignals only
+  // reads today's signals). On failure we refresh the session and retry once
+  // (a token can expire while the app idles), then revert if it still fails so
+  // the chip never shows saved when it isn't.
+  const toggleBakeMore = async (itemId: string) => {
     if (!effectiveStoreId) return;
-    setSavingBakeMore(true);
+    const nowOn = !bakeMoreChecked[itemId];
     setMessage(null);
-    try {
-      const checkedIds = items.filter((it) => bakeMoreChecked[it.item_id]).map((it) => it.item_id);
-      const toAdd = checkedIds.filter((id) => !recordedToday.has(id));
-      const toRemove = [...recordedToday].filter((id) => !checkedIds.includes(id));
+    setBakeMoreChecked((prev) => ({ ...prev, [itemId]: nowOn }));
+    setRecordedToday((prev) => {
+      const next = new Set(prev);
+      if (nowOn) next.add(itemId);
+      else next.delete(itemId);
+      return next;
+    });
 
-      if (toAdd.length > 0) {
-        const { error } = await supabase.from("bake_more_signals").upsert(
-          toAdd.map((item_id) => ({
-            store_id: effectiveStoreId,
-            item_id,
-            signal_date: today,
-            recorded_by: session?.user?.email ?? session?.user?.id ?? null,
-          })),
-          { onConflict: "store_id,item_id,signal_date" },
-        );
-        if (error) {
-          setMessage(error.message);
-          return;
-        }
-      }
-      if (toRemove.length > 0) {
-        const { error } = await supabase
-          .from("bake_more_signals")
-          .delete()
-          .eq("store_id", effectiveStoreId)
-          .eq("signal_date", today)
-          .in("item_id", toRemove);
-        if (error) {
-          setMessage(error.message);
-          return;
-        }
-      }
-      setRecordedToday(new Set(checkedIds));
-      setMessage(
-        checkedIds.length === 0
-          ? "Thanks — noted that nothing ran short today."
-          : "Thanks — your closing notes were saved.",
-      );
-    } catch (err) {
-      setMessage(`Couldn't save: ${err instanceof Error ? err.message : "network timeout"}. Try again.`);
-    } finally {
-      setSavingBakeMore(false);
+    const persist = () =>
+      nowOn
+        ? supabase.from("bake_more_signals").upsert(
+            [
+              {
+                store_id: effectiveStoreId,
+                item_id: itemId,
+                signal_date: today,
+                recorded_by: session?.user?.email ?? session?.user?.id ?? null,
+              },
+            ],
+            { onConflict: "store_id,item_id,signal_date" },
+          )
+        : supabase
+            .from("bake_more_signals")
+            .delete()
+            .eq("store_id", effectiveStoreId)
+            .eq("signal_date", today)
+            .eq("item_id", itemId);
+
+    let { error } = await persist();
+    if (error) {
+      await supabase.auth.getSession();
+      ({ error } = await persist());
+    }
+    if (error) {
+      // Revert so the chip reflects what's actually stored.
+      setBakeMoreChecked((prev) => ({ ...prev, [itemId]: !nowOn }));
+      setRecordedToday((prev) => {
+        const next = new Set(prev);
+        if (nowOn) next.delete(itemId);
+        else next.add(itemId);
+        return next;
+      });
+      setMessage("Couldn't save that change — check your connection and try again.");
     }
   };
 
@@ -374,7 +381,8 @@ export default function BakeSchedule() {
                   <h2 className="text-lg font-semibold text-white">End of day</h2>
                   <p className="mt-1 text-sm text-slate-400">
                     Did you have to bake <strong>extra</strong> of any flavour today (you ran short)?
-                    Tick them — no amounts needed. This helps managers fine-tune the counts.
+                    Tick them — no amounts needed. Saved automatically and kept highlighted until
+                    tomorrow. This helps managers fine-tune the counts.
                   </p>
                   <div className="mt-4 flex flex-wrap gap-2">
                     {items.map((item) => {
@@ -383,9 +391,7 @@ export default function BakeSchedule() {
                         <button
                           key={item.item_id}
                           type="button"
-                          onClick={() =>
-                            setBakeMoreChecked((prev) => ({ ...prev, [item.item_id]: !prev[item.item_id] }))
-                          }
+                          onClick={() => toggleBakeMore(item.item_id)}
                           className={`rounded-full px-3 py-1.5 text-sm font-semibold transition ${
                             on
                               ? "bg-amber-500 text-slate-950 hover:bg-amber-400"
@@ -398,14 +404,6 @@ export default function BakeSchedule() {
                       );
                     })}
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleSubmitBakeMore}
-                    disabled={savingBakeMore}
-                    className="mt-4 rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:opacity-50"
-                  >
-                    {savingBakeMore ? "Saving…" : "Save closing notes"}
-                  </button>
                 </div>
               )}
             </>
