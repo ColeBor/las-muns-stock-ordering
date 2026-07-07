@@ -40,7 +40,8 @@ type Store = {
 type TabKey = "details" | "stock" | "deliveries";
 
 export default function AdminCycles() {
-  const { session, loading: authLoading, isSignedIn, isStoreManager } = useAuthGate();
+  const { session, profile, loading: authLoading, isSignedIn, isStoreManager } = useAuthGate();
+  const isFactoryWorker = profile?.role === "factory_worker";
   const [cycles, setCycles] = useState<OrderCycle[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
   const [showForm, setShowForm] = useState(false);
@@ -52,7 +53,9 @@ export default function AdminCycles() {
   const [selectedCycleId, setSelectedCycleId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("details");
 
-  const canManage = isStoreManager;
+  // Factory workers get full cycle access alongside store managers — they need
+  // to see and manage what's being delivered.
+  const canManage = isStoreManager || isFactoryWorker;
 
   // Drop stale responses — deleting a cycle fires both order_cycles AND
   // cycle_stores realtime events (cascade delete), so two reloadCycles
@@ -344,9 +347,9 @@ export default function AdminCycles() {
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
           <p>Please sign in to access this page.</p>
         </div>
-      ) : !isStoreManager ? (
+      ) : !canManage ? (
         <div className="mt-8 rounded-2xl bg-slate-900/80 p-6 text-slate-300">
-          <p>This page is only available to Store Managers.</p>
+          <p>This page is only available to Store Managers and Factory Workers.</p>
         </div>
       ) : (
         <div className="mt-8 space-y-6">

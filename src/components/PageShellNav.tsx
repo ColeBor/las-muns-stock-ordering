@@ -63,6 +63,7 @@ const ADMIN_LINKS: Array<{ href: string; label: string }> = [
 const FACTORY_LINKS: Array<{ href: string; label: string }> = [
   { href: "/factory-stock", label: "Factory Stock" },
   { href: "/freezer-trace", label: "Freezer Trace" },
+  { href: "/admin/cycles", label: "Cycles" },
   { href: "/factory-bake", label: "Bake Schedule" },
   { href: "/ingredients", label: "Ingredients" },
   { href: "/recipes", label: "Recipes" },
