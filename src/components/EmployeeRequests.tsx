@@ -32,10 +32,13 @@ type RequestComment = {
   created_at: string;
 };
 
-type RequestCategory = "Store Issue" | "Request" | "Complaint" | "Question" | "Other";
+type RequestCategory = "Store Issue" | "Request" | "Complaint" | "Question" | "Other" | "Shortages";
 type RequestStatus = "open" | "in_progress" | "need_info" | "resolved" | "dismissed";
 
+// "Shortages" lets staff flag items the store is low on, to request stock
+// outside the delivery cycle.
 const CATEGORIES: RequestCategory[] = [
+  "Shortages",
   "Store Issue",
   "Request",
   "Complaint",
@@ -363,14 +366,18 @@ export default function EmployeeRequests() {
             </div>
             <div>
               <label htmlFor="description" className="block text-sm font-medium text-slate-300">
-                Description
+                {category === "Shortages" ? "Items running low" : "Description"}
               </label>
               <textarea
                 id="description"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 rows={5}
-                placeholder="Describe the issue, request, or question in detail."
+                placeholder={
+                  category === "Shortages"
+                    ? "List the items you're running low on (and how many, if you know)."
+                    : "Describe the issue, request, or question in detail."
+                }
                 className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
               />
             </div>

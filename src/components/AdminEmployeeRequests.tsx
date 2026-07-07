@@ -7,7 +7,7 @@ import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
 
 type Store = { id: string; name: string };
 
-type RequestCategory = "Store Issue" | "Request" | "Complaint" | "Question" | "Other";
+type RequestCategory = "Store Issue" | "Request" | "Complaint" | "Question" | "Other" | "Shortages";
 type RequestStatus = "open" | "in_progress" | "need_info" | "resolved" | "dismissed";
 
 type EmployeeRequest = {
@@ -67,6 +67,10 @@ export default function AdminEmployeeRequests() {
   const [commentsByRequest, setCommentsByRequest] = useState<Record<string, RequestComment[]>>({});
   const [message, setMessage] = useState<string | null>(null);
 
+  // Shortages (stock running low, requested outside the delivery cycle) get
+  // their own tab, split out from general requests.
+  const [tab, setTab] = useState<"requests" | "shortages">("requests");
+
   // Filters
   const [filterStatus, setFilterStatus] = useState<"" | RequestStatus | "open_set">("open_set");
   const [filterCategory, setFilterCategory] = useState<"" | RequestCategory>("");
@@ -111,8 +115,15 @@ export default function AdminEmployeeRequests() {
         "id,store_id,submitted_by_user_id,submitted_by_label,category,complaint_against,description,status,resolution_note,created_at,updated_at",
       )
       .order("updated_at", { ascending: false });
+    // The two tabs partition by category: Shortages in its own tab, everything
+    // else in Requests. The category filter only applies within the Requests tab.
+    if (tab === "shortages") {
+      q = q.eq("category", "Shortages");
+    } else {
+      q = q.neq("category", "Shortages");
+      if (filterCategory) q = q.eq("category", filterCategory);
+    }
     if (filterStore) q = q.eq("store_id", filterStore);
-    if (filterCategory) q = q.eq("category", filterCategory);
     if (filterStatus === "open_set") {
       q = q.in("status", ["open", "need_info", "in_progress"]);
     } else if (filterStatus) {
@@ -125,7 +136,7 @@ export default function AdminEmployeeRequests() {
       return;
     }
     setRequests((data as EmployeeRequest[]) ?? []);
-  }, [isStoreManager, filterStore, filterCategory, filterStatus]);
+  }, [isStoreManager, tab, filterStore, filterCategory, filterStatus]);
 
   const loadComments = useCallback(async () => {
     if (!isStoreManager) {
@@ -301,6 +312,23 @@ export default function AdminEmployeeRequests() {
         </div>
       ) : (
         <div className="mt-8 space-y-6">
+          <div className="flex gap-2 border-b border-white/10">
+            {(["requests", "shortages"] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setTab(t)}
+                className={`px-4 py-2 text-sm font-medium transition border-b-2 ${
+                  tab === t
+                    ? "border-cyan-400 text-cyan-300"
+                    : "border-transparent text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                {t === "requests" ? "Requests" : "Shortages"}
+              </button>
+            ))}
+          </div>
+
           <div className="flex items-end gap-3 flex-wrap rounded-2xl border border-white/10 bg-slate-900/60 p-4">
             <div>
               <label className="block text-xs font-medium text-slate-400">Status</label>
@@ -316,19 +344,21 @@ export default function AdminEmployeeRequests() {
                 <option value="">All</option>
               </select>
             </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-400">Category</label>
-              <select
-                value={filterCategory}
-                onChange={(e) => setFilterCategory(e.target.value as typeof filterCategory)}
-                className="mt-1 rounded-2xl border border-white/10 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400"
-              >
-                <option value="">All categories</option>
-                {CATEGORIES.map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
-            </div>
+            {tab !== "shortages" && (
+              <div>
+                <label className="block text-xs font-medium text-slate-400">Category</label>
+                <select
+                  value={filterCategory}
+                  onChange={(e) => setFilterCategory(e.target.value as typeof filterCategory)}
+                  className="mt-1 rounded-2xl border border-white/10 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400"
+                >
+                  <option value="">All categories</option>
+                  {CATEGORIES.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div>
               <label className="block text-xs font-medium text-slate-400">Store</label>
               <select
