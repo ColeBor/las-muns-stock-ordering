@@ -258,13 +258,9 @@ export default function HomeAdminLinks() {
         <AdminLink href="/admin/waste-analytics">Waste Analytics</AdminLink>
       </AdminSection>
 
-      <AdminSection title="Order Cycle">
-        <AdminLink href="/admin/cycles">Cycles</AdminLink>
-        <AdminLink href="/factory-stock">Factory Stock</AdminLink>
-        <AdminLink href="/factory-bake">Bake Schedule</AdminLink>
-        <AdminLink href="/ingredients">Ingredients</AdminLink>
-        <AdminLink href="/recipes">Recipes</AdminLink>
-      </AdminSection>
+      {/* Cycles / Factory Stock / Bake / Ingredients / Recipes moved to the
+          shared "Factory" section on the home page (HomeGate), which store
+          managers see too — so they're not duplicated here. */}
 
       <AdminSection title="Configuration">
         <AdminLink href="/admin/directory">Directory</AdminLink>

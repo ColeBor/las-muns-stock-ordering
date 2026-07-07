@@ -30,9 +30,12 @@ function startOfTodayIso(): string {
 
 export default function HomeGate() {
   const { session, profile, loading: authLoading } = useAuthGate();
-  // Factory Workers get a stripped-down home: just the Factory Stock entry,
+  // Factory Workers get a stripped-down home: the shared Factory section only,
   // none of the store-oriented sections (which they can't use anyway).
   const isFactoryWorker = profile?.role === "factory_worker";
+  // The Factory section is shared: store managers see it too, so cycle/factory
+  // tools live there once instead of being duplicated into the admin grid.
+  const isStoreManager = profile?.role === "store_manager";
 
   // Per-employee daily alerts shown as ⚠ on the home-page buttons. Each is
   // computed independently; if a query fails the flag stays false and the
@@ -226,7 +229,7 @@ export default function HomeGate() {
               <AnnouncementsFeed />
 
               <div className="space-y-4">
-                {isFactoryWorker && (
+                {(isFactoryWorker || isStoreManager) && (
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Factory</p>
                     <div className="mt-2 flex flex-wrap gap-2">
@@ -235,6 +238,12 @@ export default function HomeGate() {
                         className="inline-flex items-center justify-center rounded-full bg-amber-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-amber-400"
                       >
                         Factory Stock
+                      </Link>
+                      <Link
+                        href="/freezer-trace"
+                        className="inline-flex items-center justify-center rounded-full bg-amber-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-amber-400"
+                      >
+                        Freezer Trace
                       </Link>
                       <Link
                         href="/admin/cycles"
