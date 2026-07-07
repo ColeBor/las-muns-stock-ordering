@@ -1832,6 +1832,9 @@ function AllocationsTab({
   const [running, setRunning] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [formLoading, setFormLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  // null = every category selected; otherwise the explicit picked set.
+  const [exportCats, setExportCats] = useState<Set<string> | null>(null);
   // External filters (driven by the chip bar above the grid).
   const [sourceFilter, setSourceFilter] = useState<
     "all" | "factory" | "purchase" | "manual" | "hard"
@@ -2435,6 +2438,77 @@ function AllocationsTab({
     },
   ];
 
+  // Category picker + PDF export of the per-store allocations. Reads from the
+  // allocation rows, which include purchased items (sauces, drinks, …) — the
+  // factory-only demand preview omits those.
+  const categories = useMemo(
+    () =>
+      Array.from(
+        new Set(rows.map((r) => r.sub_category).filter((c): c is string => !!c)),
+      ).sort((a, b) => a.localeCompare(b)),
+    [rows],
+  );
+  const isCatPicked = (c: string) => exportCats === null || exportCats.has(c);
+  const toggleCat = (c: string) =>
+    setExportCats((prev) => {
+      const base = prev === null ? new Set(categories) : new Set(prev);
+      if (base.has(c)) base.delete(c);
+      else base.add(c);
+      return base;
+    });
+  const pickedCategories = exportCats === null ? categories : categories.filter((c) => exportCats.has(c));
+
+  const exportPdf = async () => {
+    const picked = new Set(pickedCategories);
+    // Only rows with an actual allocated qty — skip the synthetic qty-0
+    // override-only rows that appear before a re-run.
+    const selected = rows.filter((r) => r.sub_category && picked.has(r.sub_category) && r.qty > 0);
+    if (selected.length === 0) return;
+    setExporting(true);
+    try {
+      const [{ jsPDF }, autoTableMod] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
+      const autoTable = autoTableMod.default;
+      const doc = new jsPDF();
+      doc.setFontSize(15);
+      doc.text("Allocations", 14, 16);
+      doc.setFontSize(10);
+      doc.setTextColor(110);
+      doc.text(`Categories: ${pickedCategories.join(", ")}`, 14, 23);
+
+      const totalQty = selected.reduce((s, r) => s + r.qty, 0);
+      const totalDef = selected.reduce((s, r) => s + (r.shortfall > 0 ? r.shortfall : 0), 0);
+
+      autoTable(doc, {
+        startY: 28,
+        head: [["Store", "Category", "Item", "Qty", "Deficit", "Supplier"]],
+        body: selected.map((r) => [
+          r.store_name,
+          r.sub_category ?? "",
+          r.item_name,
+          String(r.qty),
+          r.shortfall > 0 ? String(r.shortfall) : "0",
+          r.supplier_name ?? "Manufactured",
+        ]),
+        foot: [["Total", "", "", String(totalQty), String(totalDef), ""]],
+        styles: { fontSize: 9, cellPadding: 2 },
+        headStyles: { fillColor: [15, 23, 42], halign: "right" },
+        footStyles: { fillColor: [241, 245, 249], textColor: 20, fontStyle: "bold" },
+        // Qty + Deficit (cols 3-4) right-aligned; the rest left-aligned.
+        didParseCell: (data) => {
+          if (data.column.index === 3 || data.column.index === 4) data.cell.styles.halign = "right";
+          else data.cell.styles.halign = "left";
+        },
+      });
+
+      const safe = (pickedCategories.length === categories.length ? "all" : pickedCategories.join("-"))
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-");
+      doc.save(`allocations-${cycleId.slice(0, 8)}-${safe}.pdf`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-4">
@@ -2633,6 +2707,34 @@ function AllocationsTab({
         />
       </div>
 
+      {rows.length > 0 && categories.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-slate-950/40 p-3">
+          <span className="text-xs font-medium uppercase tracking-wider text-slate-400">Export PDF</span>
+          {categories.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => toggleCat(c)}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                isCatPicked(c)
+                  ? "bg-cyan-500/20 text-cyan-200 ring-1 ring-cyan-400/40"
+                  : "bg-slate-800 text-slate-500 ring-1 ring-white/10"
+              }`}
+            >
+              {c}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={exportPdf}
+            disabled={exporting || pickedCategories.length === 0}
+            className="ml-auto rounded-full bg-cyan-500 px-4 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:opacity-50"
+          >
+            {exporting ? "Generating…" : "Export PDF"}
+          </button>
+        </div>
+      )}
+
       <div style={{ height: 440 }}>
         <AgGridReact<AllocationRow>
           rowData={rows}
@@ -2727,6 +2829,9 @@ function DeliveriesTab({
   const [cycleStores, setCycleStores] = useState<Array<{ id: string; name: string }>>([]);
   const [marking, setMarking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  // null = every category selected; otherwise the explicit picked set.
+  const [exportCats, setExportCats] = useState<Set<string> | null>(null);
 
   // Drop stale responses — see AllocationsTab.reload for the rationale.
   const reloadTokenRef = useRef(0);
@@ -2868,6 +2973,79 @@ function DeliveriesTab({
     ];
   }, [storeColumns]);
 
+  // Category picker + PDF export — the same delivery sheet as the demand-by-store
+  // export, but built from the finalised per-store allocations, so it includes
+  // purchased items (sauces, drinks, …) that the factory-only demand preview omits.
+  const categories = useMemo(
+    () =>
+      Array.from(
+        new Set(deliveryRows.map((r) => r.sub_category).filter((c): c is string => !!c)),
+      ).sort((a, b) => a.localeCompare(b)),
+    [deliveryRows],
+  );
+  const isCatPicked = (c: string) => exportCats === null || exportCats.has(c);
+  const toggleCat = (c: string) =>
+    setExportCats((prev) => {
+      const base = prev === null ? new Set(categories) : new Set(prev);
+      if (base.has(c)) base.delete(c);
+      else base.add(c);
+      return base;
+    });
+  const pickedCategories = exportCats === null ? categories : categories.filter((c) => exportCats.has(c));
+
+  const exportPdf = async () => {
+    const picked = new Set(pickedCategories);
+    const selected = deliveryRows.filter((r) => r.sub_category && picked.has(r.sub_category));
+    if (selected.length === 0) return;
+    setExporting(true);
+    try {
+      const [{ jsPDF }, autoTableMod] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
+      const autoTable = autoTableMod.default;
+      const dateLabel = formatLocalDate(cycleOrderDate, "");
+      // Landscape — a column per store gets wide fast.
+      const doc = new jsPDF({ orientation: "landscape" });
+      doc.setFontSize(15);
+      doc.text(`Deliveries${dateLabel ? ` — ${dateLabel}` : ""}`, 14, 15);
+      doc.setFontSize(10);
+      doc.setTextColor(110);
+      doc.text(`Categories: ${pickedCategories.join(", ")}`, 14, 21);
+
+      const storeTotals = storeColumns.map((s) =>
+        selected.reduce((sum, r) => sum + Number(r[s.id] ?? 0), 0),
+      );
+      const grand = selected.reduce((sum, r) => sum + r.total, 0);
+
+      autoTable(doc, {
+        startY: 26,
+        head: [["Item", "Category", ...storeColumns.map((s) => s.name), "Total"]],
+        body: selected.map((r) => [
+          r.item_name,
+          r.sub_category ?? "",
+          ...storeColumns.map((s) => {
+            const v = Number(r[s.id] ?? 0);
+            return v === 0 ? "—" : String(v);
+          }),
+          String(r.total),
+        ]),
+        foot: [["Total", "", ...storeTotals.map((t) => String(t)), String(grand)]],
+        styles: { fontSize: 8, cellPadding: 1.5 },
+        headStyles: { fillColor: [15, 23, 42], halign: "right" },
+        footStyles: { fillColor: [241, 245, 249], textColor: 20, fontStyle: "bold" },
+        didParseCell: (data) => {
+          if (data.column.index < 2) data.cell.styles.halign = "left";
+          else data.cell.styles.halign = "right";
+        },
+      });
+
+      const safe = (pickedCategories.length === categories.length ? "all" : pickedCategories.join("-"))
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-");
+      doc.save(`deliveries-${dateLabel || cycleId.slice(0, 8)}-${safe}.pdf`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const isAllocated = cycleStatus === "allocated";
   const isDelivered = cycleStatus === "delivered";
   const hasOrderDate = !!cycleOrderDate;
@@ -2935,6 +3113,34 @@ function DeliveriesTab({
           {marking ? "Marking..." : isDelivered ? "Delivered ✓" : "Mark delivered"}
         </button>
       </div>
+
+      {deliveryRows.length > 0 && categories.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-slate-950/40 p-3">
+          <span className="text-xs font-medium uppercase tracking-wider text-slate-400">Export PDF</span>
+          {categories.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => toggleCat(c)}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                isCatPicked(c)
+                  ? "bg-cyan-500/20 text-cyan-200 ring-1 ring-cyan-400/40"
+                  : "bg-slate-800 text-slate-500 ring-1 ring-white/10"
+              }`}
+            >
+              {c}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={exportPdf}
+            disabled={exporting || pickedCategories.length === 0}
+            className="ml-auto rounded-full bg-cyan-500 px-4 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:opacity-50"
+          >
+            {exporting ? "Generating…" : "Export PDF"}
+          </button>
+        </div>
+      )}
 
       {message && <p className="text-sm text-cyan-300">{message}</p>}
 
