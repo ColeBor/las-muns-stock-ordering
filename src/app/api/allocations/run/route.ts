@@ -112,32 +112,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Every participating store must have marked its stock entry finished
-  // before allocations can run. This protects against the admin running
-  // allocations on a half-submitted cycle.
-  const { data: cycleStoresRows, error: csErr } = await supabaseAdmin
-    .from("cycle_stores")
-    .select("store_id,finished_at,stores(name)")
-    .eq("cycle_id", cycle_id);
-  if (csErr) {
-    return NextResponse.json({ error: csErr.message }, { status: 500 });
-  }
-  const unfinished = (cycleStoresRows ?? []).filter((cs) => !cs.finished_at) as unknown as Array<{
-    store_id: string;
-    finished_at: string | null;
-    stores: { name: string } | null;
-  }>;
-  if (unfinished.length > 0) {
-    const names = unfinished
-      .map((cs) => cs.stores?.name ?? cs.store_id)
-      .sort();
-    return NextResponse.json(
-      {
-        error: `Waiting on ${names.length} store${names.length === 1 ? "" : "s"} to mark their stock entry finished: ${names.join(", ")}`,
-      },
-      { status: 400 },
-    );
-  }
+  // Allocations now run continuously from cycle creation (so the delivery plan
+  // is live as stores enter stock), rather than waiting for everyone to finish.
+  // The "all stores finished" checkpoint has moved to Finalize — a human only
+  // locks the plan once every store has submitted.
 
   const [
     stockRes,

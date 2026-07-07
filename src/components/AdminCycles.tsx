@@ -37,7 +37,7 @@ type Store = {
   tier: number;
 };
 
-type TabKey = "details" | "stock" | "allocations" | "deliveries";
+type TabKey = "details" | "stock" | "deliveries";
 
 // Form state for the Overrides tab. Lifted out of OverridesTab so switching
 // tabs inside the cycle modal keeps the in-progress entry. AdminCycles
@@ -446,7 +446,7 @@ export default function AdminCycles() {
               </div>
 
               <div className="flex gap-2 border-b border-white/10 mb-4 flex-wrap">
-                {(["details", "stock", "allocations", "deliveries"] as TabKey[]).map((tab) => (
+                {(["details", "stock", "deliveries"] as TabKey[]).map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setActiveTab(tab)}
@@ -456,13 +456,7 @@ export default function AdminCycles() {
                         : "border-transparent text-slate-400 hover:text-slate-200"
                     }`}
                   >
-                    {tab === "details"
-                      ? "Details"
-                      : tab === "stock"
-                        ? "Stock"
-                        : tab === "allocations"
-                          ? "Allocations"
-                          : "Deliveries"}
+                    {tab === "details" ? "Details" : tab === "stock" ? "Stock" : "Delivery"}
                   </button>
                 ))}
               </div>
@@ -486,15 +480,6 @@ export default function AdminCycles() {
                 <CountsTab
                   cycleId={selectedCycle.id}
                   cycleStatus={selectedCycle.status}
-                />
-              )}
-              {activeTab === "allocations" && (
-                <AllocationsTab
-                  cycleId={selectedCycle.id}
-                  cycleStatus={selectedCycle.status}
-                  onFinalized={reloadCycles}
-                  overrideDraft={overrideDraft}
-                  setOverrideDraft={setOverrideDraft}
                 />
               )}
               {activeTab === "deliveries" && (
@@ -2949,7 +2934,7 @@ function DeliveriesTab({
   // vanishing column was what made AG Grid log "column <store> not found"
   // whenever the grid was sorted/filtered by a store whose total went to 0.
   const [cycleStores, setCycleStores] = useState<
-    Array<{ id: string; name: string; delivered_at: string | null }>
+    Array<{ id: string; name: string; delivered_at: string | null; finished_at: string | null }>
   >([]);
   const [marking, setMarking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -2970,7 +2955,7 @@ function DeliveriesTab({
         .eq("cycle_id", cycleId),
       supabase
         .from("cycle_stores")
-        .select("delivered_at, stores(id,name)")
+        .select("delivered_at, finished_at, stores(id,name)")
         .eq("cycle_id", cycleId),
     ]);
     if (myToken !== reloadTokenRef.current) return;
@@ -2983,11 +2968,17 @@ function DeliveriesTab({
       const list = (
         storesRes.data as unknown as Array<{
           delivered_at: string | null;
+          finished_at: string | null;
           stores: { id: string; name: string } | null;
         }>
       )
         .filter((cs) => !!cs.stores)
-        .map((cs) => ({ id: cs.stores!.id, name: cs.stores!.name, delivered_at: cs.delivered_at }));
+        .map((cs) => ({
+          id: cs.stores!.id,
+          name: cs.stores!.name,
+          delivered_at: cs.delivered_at,
+          finished_at: cs.finished_at,
+        }));
       setCycleStores(list);
     }
   }, [cycleId]);
@@ -3223,19 +3214,22 @@ function DeliveriesTab({
     }
   };
 
-  const isAllocated = cycleStatus === "allocated";
   const isFinalized = cycleStatus === "finalized";
   const isDelivered = cycleStatus === "delivered";
   const hasOrderDate = !!cycleOrderDate;
 
-  // Finalize is the lock step: it must come before Delivered.
-  const canFinalize = isAllocated && hasOrderDate && !isDelivered;
+  // Allocations run automatically from cycle creation, so there's no "run" step.
+  // Finalize is the lock: a human clicks it once EVERY store has marked its
+  // stock finished (it never auto-finalizes). It must come before Delivered.
+  const allStoresFinished = cycleStores.length > 0 && cycleStores.every((s) => !!s.finished_at);
+  const unfinishedCount = cycleStores.filter((s) => !s.finished_at).length;
+  const canFinalize = allStoresFinished && hasOrderDate && !isFinalized && !isDelivered;
   const finalizeTitle = isDelivered
     ? "Already delivered."
     : isFinalized
       ? "Already finalized."
-      : !isAllocated
-        ? "Run allocations first."
+      : !allStoresFinished
+        ? `Waiting on ${unfinishedCount} store${unfinishedCount === 1 ? "" : "s"} to finish their stock entry.`
         : !hasOrderDate
           ? "Set an order date first."
           : undefined;
@@ -3339,7 +3333,7 @@ function DeliveriesTab({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="text-sm text-slate-400">
           {deliveryRows.length === 0 ? (
-            "Run allocations first to see what to load."
+            "Calculating — the delivery plan fills in automatically as stores enter stock."
           ) : (
             <>
               {deliveryRows.length} items · {storeCount} {storeCount === 1 ? "store" : "stores"} · {totalUnits} total units

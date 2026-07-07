@@ -44,15 +44,38 @@ export async function POST(request: NextRequest) {
   }
 
   if (locked) {
-    if (cycle.status !== "allocated") {
+    // Allocations run automatically from creation, so a cycle is 'draft' (very
+    // briefly, before the first auto-run) or 'allocated'. Finalize is the
+    // checkpoint: every store must have marked its stock finished first.
+    if (cycle.status !== "allocated" && cycle.status !== "draft") {
       return NextResponse.json(
-        { error: "Run allocations before finalizing the delivery" },
+        { error: "This delivery can't be finalized in its current state" },
         { status: 400 },
       );
     }
     if (!cycle.order_date) {
       return NextResponse.json(
         { error: "Set an order date before finalizing the delivery" },
+        { status: 400 },
+      );
+    }
+    const { data: csRows, error: csErr } = await supabaseAdmin
+      .from("cycle_stores")
+      .select("finished_at, stores(name)")
+      .eq("cycle_id", cycle_id);
+    if (csErr) {
+      return NextResponse.json({ error: csErr.message }, { status: 500 });
+    }
+    const unfinished = ((csRows ?? []) as unknown as Array<{
+      finished_at: string | null;
+      stores: { name: string } | null;
+    }>).filter((cs) => !cs.finished_at);
+    if (unfinished.length > 0) {
+      const names = unfinished.map((cs) => cs.stores?.name ?? "a store").sort();
+      return NextResponse.json(
+        {
+          error: `Waiting on ${names.length} store${names.length === 1 ? "" : "s"} to finish their stock entry: ${names.join(", ")}`,
+        },
         { status: 400 },
       );
     }
