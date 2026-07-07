@@ -2948,7 +2948,9 @@ function DeliveriesTab({
   // existence just because its delivered quantity dropped to zero — that
   // vanishing column was what made AG Grid log "column <store> not found"
   // whenever the grid was sorted/filtered by a store whose total went to 0.
-  const [cycleStores, setCycleStores] = useState<Array<{ id: string; name: string }>>([]);
+  const [cycleStores, setCycleStores] = useState<
+    Array<{ id: string; name: string; delivered_at: string | null }>
+  >([]);
   const [marking, setMarking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -2968,7 +2970,7 @@ function DeliveriesTab({
         .eq("cycle_id", cycleId),
       supabase
         .from("cycle_stores")
-        .select("stores(id,name)")
+        .select("delivered_at, stores(id,name)")
         .eq("cycle_id", cycleId),
     ]);
     if (myToken !== reloadTokenRef.current) return;
@@ -2978,9 +2980,14 @@ function DeliveriesTab({
     }
     if (allocRes.data) setAllocations(allocRes.data as unknown as DeliveryAllocation[]);
     if (storesRes.data) {
-      const list = (storesRes.data as unknown as Array<{ stores: { id: string; name: string } | null }>)
-        .map((cs) => cs.stores)
-        .filter((s): s is { id: string; name: string } => !!s);
+      const list = (
+        storesRes.data as unknown as Array<{
+          delivered_at: string | null;
+          stores: { id: string; name: string } | null;
+        }>
+      )
+        .filter((cs) => !!cs.stores)
+        .map((cs) => ({ id: cs.stores!.id, name: cs.stores!.name, delivered_at: cs.delivered_at }));
       setCycleStores(list);
     }
   }, [cycleId]);
@@ -3233,15 +3240,70 @@ function DeliveriesTab({
           ? "Set an order date first."
           : undefined;
 
-  // Delivered now requires the delivery to be finalized (locked) first.
-  const canMarkDelivered = isFinalized && !isDelivered;
-  const markDeliveredTitle = isDelivered
-    ? "Already delivered."
-    : !isFinalized
-      ? "Finalize the delivery first."
-      : undefined;
+  // Per-store delivery (requires the cycle to be finalized first). Each store is
+  // marked as the truck drops it; the cycle flips to delivered once all are done.
+  const deliveredStoreCount = cycleStores.filter((s) => s.delivered_at).length;
+  const remainingStores = cycleStores.filter((s) => !s.delivered_at);
+  const showDeliveryPanel = (isFinalized || isDelivered) && cycleStores.length > 0;
 
   const cycleDateLabel = formatLocalDate(cycleOrderDate, "Not set");
+
+  const deliverStore = async (storeId: string, storeName: string) => {
+    if (!confirm(`Mark ${storeName} delivered? Its stock moves to its next cycle and this can't be undone here.`)) {
+      return;
+    }
+    setMarking(true);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/allocations/deliver-store", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cycle_id: cycleId, store_id: storeId }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setMessage(`Error: ${data.error}`);
+        return;
+      }
+      await onFinalized();
+    } catch (err) {
+      setMessage(`Error: ${err instanceof Error ? err.message : "Unknown"}`);
+    } finally {
+      setMarking(false);
+    }
+  };
+
+  const deliverAllRemaining = async () => {
+    if (remainingStores.length === 0) return;
+    if (
+      !confirm(
+        `Mark all ${remainingStores.length} remaining store${remainingStores.length === 1 ? "" : "s"} delivered? This closes the cycle and moves their stock.`,
+      )
+    ) {
+      return;
+    }
+    setMarking(true);
+    setMessage(null);
+    try {
+      for (const s of remainingStores) {
+        const response = await fetch("/api/allocations/deliver-store", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cycle_id: cycleId, store_id: s.id }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          setMessage(`Error delivering ${s.name}: ${data.error}`);
+          break;
+        }
+      }
+      await onFinalized();
+    } catch (err) {
+      setMessage(`Error: ${err instanceof Error ? err.message : "Unknown"}`);
+    } finally {
+      setMarking(false);
+    }
+  };
 
   const finalize = async (lock: boolean) => {
     setMarking(true);
@@ -3264,37 +3326,6 @@ function DeliveriesTab({
         setMessage("✅ Delivery finalized — the plan is locked and the PDF has downloaded.");
       } else {
         setMessage("Delivery unlocked — allocations can be re-run again.");
-      }
-    } catch (err) {
-      setMessage(`Error: ${err instanceof Error ? err.message : "Unknown"}`);
-    } finally {
-      setMarking(false);
-    }
-  };
-
-  const markDelivered = async () => {
-    if (!canMarkDelivered) return;
-    if (
-      !confirm(
-        `Mark the ${cycleDateLabel} cycle as delivered? It will be locked from further changes.`,
-      )
-    ) {
-      return;
-    }
-    setMarking(true);
-    setMessage(null);
-    try {
-      const response = await fetch("/api/allocations/finalize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cycle_id: cycleId }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        setMessage(`Error: ${data.error}`);
-      } else {
-        setMessage(`✅ ${data.message}`);
-        await onFinalized();
       }
     } catch (err) {
       setMessage(`Error: ${err instanceof Error ? err.message : "Unknown"}`);
@@ -3338,22 +3369,67 @@ function DeliveriesTab({
               {marking ? "Working..." : "Unlock"}
             </button>
           )}
-          <button
-            type="button"
-            onClick={markDelivered}
-            disabled={!canMarkDelivered || marking}
-            title={markDeliveredTitle}
-            className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {marking ? "Marking..." : isDelivered ? "Delivered ✓" : "Mark delivered"}
-          </button>
+          {isDelivered ? (
+            <span className="rounded-full bg-emerald-500/20 px-4 py-2 text-sm font-semibold text-emerald-300 ring-1 ring-emerald-400/40">
+              Delivered ✓
+            </span>
+          ) : (
+            isFinalized &&
+            remainingStores.length > 0 && (
+              <button
+                type="button"
+                onClick={deliverAllRemaining}
+                disabled={marking}
+                className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {marking ? "Marking..." : "Deliver all remaining"}
+              </button>
+            )
+          )}
         </div>
       </div>
 
       {isFinalized && (
         <div className="rounded-2xl border border-amber-500/30 bg-amber-950/50 px-4 py-3 text-sm text-amber-200">
           🔒 Delivery is <strong>finalized</strong> — the plan is locked and won&apos;t
-          auto-change. Re-download the PDF below if needed, then mark it delivered.
+          auto-change. Mark each store below as the truck drops it; the cycle closes once all
+          {" "}
+          {cycleStores.length} are delivered.
+        </div>
+      )}
+
+      {showDeliveryPanel && (
+        <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-white">Per-store delivery</h3>
+            <span className="text-xs text-slate-400">
+              {deliveredStoreCount} / {cycleStores.length} delivered
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {[...cycleStores]
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .map((s) => (
+                <div
+                  key={s.id}
+                  className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-slate-950 px-3 py-1.5 text-sm"
+                >
+                  <span className={s.delivered_at ? "text-emerald-300" : "text-slate-200"}>{s.name}</span>
+                  {s.delivered_at ? (
+                    <span className="text-xs font-semibold text-emerald-400">✓ delivered</span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => deliverStore(s.id, s.name)}
+                      disabled={marking}
+                      className="rounded-full bg-emerald-500 px-3 py-0.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:opacity-50"
+                    >
+                      Deliver
+                    </button>
+                  )}
+                </div>
+              ))}
+          </div>
         </div>
       )}
 
