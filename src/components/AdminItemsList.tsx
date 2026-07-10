@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
 import { useFormDraft } from "@/lib/useFormDraft";
+import { withTimeout } from "@/lib/withTimeout";
 import { AgGridReact } from "@/lib/agGrid";
 import type { ColDef } from "ag-grid-community";
 
@@ -200,10 +201,19 @@ export default function AdminItemsList({
     };
 
     try {
-      const { error } = editingItem
-        ? await supabase.from("items").update(payload).eq("id", editingItem.id)
-        : await supabase.from("items").insert([payload]);
+      const write = () =>
+        editingItem
+          ? supabase.from("items").update(payload).eq("id", editingItem.id)
+          : supabase.from("items").insert([payload]);
 
+      // Race the write against a deadline so a stale-session stall can't leave
+      // the button stuck on "Saving…". If it fails, refresh the token (it may
+      // have expired while the form was being filled in) and retry once.
+      let { error } = await withTimeout(write(), "Saving item");
+      if (error) {
+        await supabase.auth.getSession();
+        ({ error } = await withTimeout(write(), "Saving item"));
+      }
       if (error) {
         setMessage(error.message);
         return;
@@ -220,7 +230,8 @@ export default function AdminItemsList({
         setName("");
         setTimeout(() => document.getElementById("name")?.focus(), 0);
       }
-      await reload();
+      // Best-effort refresh; don't let a slow reload re-hang the button.
+      await withTimeout(reload(), "Refreshing items").catch(() => {});
     } catch (err) {
       setMessage(
         `Couldn't save item: ${
