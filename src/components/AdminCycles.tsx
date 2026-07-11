@@ -1096,15 +1096,14 @@ function PreviewTab({ cycleId }: { cycleId: string }) {
       if (totalDemand <= 0) continue; // skip items with no demand
       const item = itemsById.get(itemId);
       if (!item) continue;
-      // Only items the factory actually supplies belong in this view — the
-      // same rule the allocation engine uses (manufactured, or explicitly
-      // tracked at the factory like drinks). Purchased store-direct items
-      // (receipt paper, cleaning supplies, …) go via supplier POs and aren't
-      // part of factory demand.
+      // Factory-supplied items (manufactured, or purchased-but-tracked like
+      // drinks) get a factory-availability + shortfall. Purchased store-direct
+      // items (sauces, cleaning supplies, …) come via supplier POs — unlimited
+      // supply, so no factory availability and never "short" — but they're
+      // still included so the demand view (and its PDF) is complete.
       const factoryStocked = item.type === "manufactured" || item.track_factory_stock;
-      if (!factoryStocked) continue;
-      const factoryAvailable = factoryByItem.get(itemId) ?? 0;
-      const shortfall = Math.max(0, totalDemand - factoryAvailable);
+      const factoryAvailable = factoryStocked ? (factoryByItem.get(itemId) ?? 0) : 0;
+      const shortfall = factoryStocked ? Math.max(0, totalDemand - factoryAvailable) : 0;
       previewRows.push({
         item_id: itemId,
         item_name: item.name,
@@ -1495,9 +1494,9 @@ function PreviewByStoreTab({ cycleId }: { cycleId: string }) {
       if (demand <= 0) return;
       const it = itemsById.get(itemId);
       if (!it) return;
-      // Factory-supplied items only — same rule as the Preview tab and the
-      // allocation engine (manufactured, or tracked at the factory).
-      if (it.type !== "manufactured" && !it.track_factory_stock) return;
+      // Include every item with demand — manufactured, factory-tracked, and
+      // purchased store-direct (sauces, …) — so the per-store demand view and
+      // its PDF are complete.
       let a = acc.get(itemId);
       if (!a) {
         a = { type: it.type, sub_category: it.sub_category, item_name: it.name, perStore: new Map() };
