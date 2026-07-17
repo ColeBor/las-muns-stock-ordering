@@ -4,83 +4,102 @@ import { useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { hasUnsaved } from "@/lib/unsavedGuard";
 
-// Keeps a long-lived PWA session healthy. Two distinct staleness modes bite this
-// app, and each needs its own remedy.
+// Keeps a long-lived Android-tablet PWA session healthy across idle and sleep —
+// the exact conditions that broke it: a tablet left open a long time, or one
+// that goes to sleep/idle.
 //
-// 1. RESUMED AFTER BACKGROUND. Installed to the home screen, the app is resumed
-//    rather than reloaded, so after a long spell in the background it keeps the
-//    exact JS bundle and in-memory Supabase session it held when last
-//    foregrounded. Both go stale: the access token expires and its background
-//    refresh can wedge (throttled timers + a held processLock), surfacing as
-//    spurious "Please sign in" screens and requests — e.g. a waste-photo upload
-//    — that hang forever; and the code misses any deploy shipped meanwhile.
-//    useAuthGate revalidates on resume, which is enough for a brief background,
-//    but past a threshold the only reliable recovery is one hard reload: it
-//    re-fetches the current bundle and re-bootstraps auth from storage with no
-//    wedged locks. To the user it just looks like the app refreshing on return.
+// When a tablet sleeps (or the app sits idle), the OS FREEZES JavaScript timers,
+// so the access token quietly expires and nothing refreshes it. On wake the app
+// has a dead session and the next action fails. The usual "we're back" signal
+// (visibilitychange) is unreliable on Android screen-off/on, so we ALSO detect
+// sleep directly by watching how much wall-clock time elapsed between timer
+// ticks — a big jump means the device was frozen.
 //
-// 2. LEFT OPEN BUT IDLE. A device left on a page (screen on, untouched — e.g. a
-//    store tablet) never fires visibilitychange, so #1 never triggers, yet the
-//    access token still ages out and supabase-js's own refresh can be throttled
-//    or wedged. The next action then fires with a dead token and hangs. While
-//    the page is visible we proactively refresh the session on a timer so a live
-//    token is always ready. This never reloads — it must be safe to run while
-//    someone is mid-entry — so it can only ever keep the session alive, not
-//    discard work.
-const STALE_AFTER_MS = 10 * 60 * 1000; // hidden ≥ 10 min → reload on return
-const KEEPALIVE_MS = 4 * 60 * 1000; // refresh the session every 4 min while visible
+// Recovery ladder (never over unsaved input; only reload while visible):
+//   - short doze      → refresh the token in place
+//   - long sleep/idle → one hard reload for a clean session + the latest bundle
+
+const STALE_AFTER_MS = 5 * 60 * 1000; // away/asleep >= 5 min -> reload on return
+const TICK_MS = 30 * 1000; // watchdog cadence
+const KEEPALIVE_EVERY = 8; // ~ every 4 min while visible, proactively refresh
 
 export default function ResumeReload() {
-  // Mode 1: reload when returning to the foreground after a long background.
+  // Reload when returning to the foreground after a long background. Covers the
+  // app-switch case (which DOES fire visibilitychange/focus); the watchdog below
+  // covers screen-off/on, which often doesn't.
   useEffect(() => {
     if (typeof document === "undefined") return;
 
     let hiddenAt: number | null =
       document.visibilityState === "hidden" ? Date.now() : null;
 
-    const onVisibility = () => {
+    const onResume = () => {
       if (document.visibilityState === "hidden") {
-        // Remember when we went away; only stamp the first hide of a streak.
         if (hiddenAt === null) hiddenAt = Date.now();
         return;
       }
-      // Back in the foreground. Reload only if we were gone long enough that the
-      // session/bundle is likely stale — quick app-switches fall through and are
-      // handled by useAuthGate's lightweight revalidate instead. Never reload
-      // over unsaved input: hold off and let the keep-alive refresh below revive
-      // the session in place, so a half-finished entry is not thrown away.
       if (hiddenAt !== null && Date.now() - hiddenAt >= STALE_AFTER_MS && !hasUnsaved()) {
         window.location.reload();
         return;
       }
       hiddenAt = null;
+      // Back after a short absence — make sure the token is live for the next tap.
+      void supabase.auth.getSession().catch(() => {});
     };
 
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => document.removeEventListener("visibilitychange", onVisibility);
+    document.addEventListener("visibilitychange", onResume);
+    window.addEventListener("focus", onResume);
+    return () => {
+      document.removeEventListener("visibilitychange", onResume);
+      window.removeEventListener("focus", onResume);
+    };
   }, []);
 
-  // Mode 2: keep the token fresh while the app sits open and visible. Purely
-  // additive — it refreshes and never reloads, so it is safe to fire at any
-  // moment, including mid-entry.
+  // Sleep watchdog + keep-alive, in one timer. If the wall clock jumped far past
+  // the tick interval, the device was asleep/frozen (its timers stopped) —
+  // recover. Otherwise, periodically refresh the token while the app is visible
+  // so an idle-but-awake tablet always has a live session ready.
   useEffect(() => {
     if (typeof document === "undefined") return;
 
     let cancelled = false;
+    let last = Date.now();
+    let count = 0;
 
     const tick = async () => {
-      if (cancelled || document.visibilityState !== "visible") return;
-      try {
-        // getSession() returns the stored session and refreshes it if expired, so
-        // an idle-but-open tab keeps a valid access token ready for the next call.
-        await supabase.auth.getSession();
-      } catch {
-        // Swallow — the auth gate's own safety timers and the client's fetch
-        // timeouts still keep the UI from hanging.
+      if (cancelled) return;
+      const now = Date.now();
+      const drift = now - last;
+      last = now;
+      count += 1;
+      const visible = document.visibilityState === "visible";
+
+      // A jump well beyond the interval means the device slept/froze for `drift`.
+      if (drift > TICK_MS * 2) {
+        if (drift >= STALE_AFTER_MS && visible && !hasUnsaved()) {
+          window.location.reload();
+          return;
+        }
+        // Short doze (or hidden / mid-entry): revive the token in place.
+        try {
+          await supabase.auth.getSession();
+        } catch {
+          // Bounded by the client's fetch timeout; nothing to do here.
+        }
+        return;
+      }
+
+      // Normal keep-alive while visible.
+      if (visible && count % KEEPALIVE_EVERY === 0) {
+        try {
+          await supabase.auth.getSession();
+        } catch {
+          // ignore
+        }
       }
     };
 
-    const timer = window.setInterval(tick, KEEPALIVE_MS);
+    const timer = window.setInterval(tick, TICK_MS);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
