@@ -83,7 +83,9 @@ function todayIso() {
 // forever. Downscale to a sane long edge and re-encode as JPEG before staging
 // so the actual upload is a few hundred KB. Anything we can't decode (e.g. an
 // iOS HEIC picked from the library) falls back to the original file untouched.
-const MAX_UPLOAD_DIM = 1600;
+// Kept small on purpose: a waste-log reference photo doesn't need to be large,
+// and a smaller file uploads far more reliably over slow in-store wifi.
+const MAX_UPLOAD_DIM = 1280;
 
 // Decode an image to something canvas can draw. Prefer createImageBitmap (fast,
 // off-thread) but fall back to an <img>+objectURL because older iOS Safari
@@ -133,7 +135,7 @@ async function shrinkForUpload(file: File): Promise<File> {
       if (!ctx) return file;
       ctx.drawImage(src, 0, 0, w, h);
       const blob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob(resolve, "image/jpeg", 0.72),
+        canvas.toBlob(resolve, "image/jpeg", 0.6),
       );
       // If re-encoding didn't actually help (e.g. an already-tiny image), keep the
       // original so we never make a file bigger.
@@ -545,33 +547,21 @@ export default function WasteLog() {
       if (inserted?.id && stagedPhotos.length > 0) {
         setUploadingPhotos(true);
         for (const sp of stagedPhotos) {
-          const ext =
-            (sp.file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
-          const path = `${effectiveStoreId}/${inserted.id}/${crypto.randomUUID()}.${ext}`;
           try {
-            const { error: upErr } = await withTimeout(
-              supabase.storage
-                .from("waste-photos")
-                .upload(path, sp.file, { contentType: sp.file.type || undefined, upsert: false }),
+            // Upload through our own server (see /api/waste-photos/upload): a
+            // plain POST that avoids the client Supabase auth/token/lock that
+            // kept stalling the direct-to-storage upload on flaky tablet wifi.
+            const fd = new FormData();
+            fd.append("file", sp.file);
+            fd.append("waste_log_id", inserted.id);
+            fd.append("store_id", effectiveStoreId);
+            const res = await withTimeout(
+              fetch("/api/waste-photos/upload", { method: "POST", body: fd }),
               "Photo upload",
             );
-            if (upErr) {
-              setMessage(`Photo upload failed: ${upErr.message}`);
-              continue;
-            }
-            const { error: rowErr } = await withTimeout(
-              supabase.from("waste_log_photos").insert({
-                waste_log_id: inserted.id,
-                store_id: effectiveStoreId,
-                storage_path: path,
-              }),
-              "Photo save",
-            );
-            if (rowErr) {
-              // Roll back the orphaned file so it isn't left without a row.
-              // Fire-and-forget: a stalled cleanup must not re-hang the button.
-              void supabase.storage.from("waste-photos").remove([path]).catch(() => {});
-              setMessage(`Photo save failed: ${rowErr.message}`);
+            if (!res.ok) {
+              const data = (await res.json().catch(() => ({}))) as { error?: string };
+              setMessage(`Photo upload failed: ${data.error ?? `HTTP ${res.status}`}`);
               continue;
             }
             uploaded += 1;
