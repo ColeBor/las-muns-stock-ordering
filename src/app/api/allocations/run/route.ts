@@ -23,8 +23,9 @@ type Item = {
   id: string;
   type: "manufactured" | "purchased";
   supplier_id: string | null;
-  // Purchased items with this flag are stocked + allocated like manufactured
-  // ones (from factory_inventory, with shortfalls) rather than unlimited supply.
+  sub_category: string | null;
+  // Only Empanadas are rationed against factory stock now; track_factory_stock
+  // is retained for other uses but no longer changes allocation behaviour.
   track_factory_stock: boolean;
 };
 
@@ -146,7 +147,7 @@ export async function POST(request: NextRequest) {
       .eq("cycle_id", cycle_id),
     supabaseAdmin
       .from("items")
-      .select("id,type,supplier_id,track_factory_stock"),
+      .select("id,type,supplier_id,sub_category,track_factory_stock"),
     supabaseAdmin
       .from("cycle_stores")
       .select("store_id")
@@ -301,18 +302,20 @@ export async function POST(request: NextRequest) {
     const item = itemsById.get(item_id);
     if (!item) continue;
 
-    // Manufactured, or a purchased item flagged to be stocked at the factory →
-    // allocate from factory_inventory (with shortfalls). Everything else is
-    // purchased = unlimited supply.
-    const factoryStocked = item.type === "manufactured" || item.track_factory_stock;
+    // ONLY Empanadas are rationed against factory stock via the tier-fair
+    // algorithm (they're the constrained resource the factory actually counts).
+    // Everything else — other manufactured items, drinks, sauces — is delivered
+    // at its FULL demand regardless of factory stock, because the factory isn't
+    // keeping counts on those, so we must not withhold delivery on a stale 0.
+    const isEmpanada = item.sub_category === "Empanada";
 
     const baseSource: AllocationRow["source"] = override
       ? "manual_override"
-      : factoryStocked
+      : isEmpanada
         ? "factory"
         : "purchase";
 
-    if (factoryStocked) {
+    if (isEmpanada) {
       manufacturedStates.set(key, {
         store_id,
         item_id,
@@ -323,7 +326,8 @@ export async function POST(request: NextRequest) {
         overrideMode: override?.mode ?? null,
         overdraft: 0,
       });
-    } else if (item.type === "purchased") {
+    } else {
+      // Full demand, unlimited supply — no factory rationing or shortfall.
       allocationRows.push({
         cycle_id: cycle_id!,
         store_id,
@@ -345,10 +349,11 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Manufactured allocation runs in two phases against the single factory:
+  // Empanada allocation runs in two phases against the single factory
+  // (manufacturedStates now holds only Empanadas):
   //
   //   Phase 1 (floor of 1): every demanding store gets 1 unit of each
-  //   manufactured item it wants, walking stores in tier order so the
+  //   Empanada it wants, walking stores in tier order so the
   //   highest-tier stores get the floor first if stock is tight.
   //
   //   Phase 2 (tier-fair distribution): remaining stock is distributed

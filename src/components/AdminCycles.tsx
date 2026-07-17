@@ -1101,9 +1101,11 @@ function PreviewTab({ cycleId }: { cycleId: string }) {
       // items (sauces, cleaning supplies, …) come via supplier POs — unlimited
       // supply, so no factory availability and never "short" — but they're
       // still included so the demand view (and its PDF) is complete.
-      const factoryStocked = item.type === "manufactured" || item.track_factory_stock;
-      const factoryAvailable = factoryStocked ? (factoryByItem.get(itemId) ?? 0) : 0;
-      const shortfall = factoryStocked ? Math.max(0, totalDemand - factoryAvailable) : 0;
+      // Only Empanadas are rationed against factory stock, so only they have a
+      // factory-availability + shortfall. Everything else is full demand.
+      const isEmpanada = item.sub_category === "Empanada";
+      const factoryAvailable = isEmpanada ? (factoryByItem.get(itemId) ?? 0) : 0;
+      const shortfall = isEmpanada ? Math.max(0, totalDemand - factoryAvailable) : 0;
       previewRows.push({
         item_id: itemId,
         item_name: item.name,
@@ -1209,7 +1211,7 @@ function PreviewTab({ cycleId }: { cycleId: string }) {
           r.item_name,
           r.sub_category ?? "",
           String(r.total_demand),
-          r.type === "manufactured" ? String(r.factory_available) : "—",
+          r.sub_category === "Empanada" ? String(r.factory_available) : "—",
           r.projected_shortfall > 0 ? String(r.projected_shortfall) : "0",
         ]),
         foot: [["Total", "", String(totalDemand), "", String(totalShort)]],
@@ -1281,7 +1283,7 @@ function PreviewTab({ cycleId }: { cycleId: string }) {
       valueFormatter: (p) => {
         const row = (p.data as PreviewRow | undefined) ?? null;
         if (!row) return "";
-        return row.type === "purchased" ? "—" : String(p.value ?? 0);
+        return row.sub_category === "Empanada" ? String(p.value ?? 0) : "—";
       },
     },
     {
@@ -1834,7 +1836,10 @@ function DeliveriesTab({
   );
 
   const { storeColumns, deliveryRows } = useMemo(() => {
-    const positive = allocations.filter((a) => a.qty > 0);
+    // Show every demanded item — including ones the factory couldn't supply
+    // (qty 0, e.g. Empanadas that came up short) — so nothing silently drops
+    // off the sheet just because its available quantity is 0.
+    const positive = allocations;
     type ItemAcc = {
       item_id: string;
       type: string;
