@@ -5,14 +5,21 @@ import { supabase } from "@/lib/supabaseClient";
 import { useAuthGate } from "@/lib/useAuthGate";
 import { formatLocalDate, parseLocalDate } from "@/lib/dateOnly";
 import { useRealtimeRefetch } from "@/lib/useRealtimeRefetch";
+import { withTimeout } from "@/lib/withTimeout";
+import { setUnsaved } from "@/lib/unsavedGuard";
 import { AgGridReact } from "@/lib/agGrid";
-import type { ColDef, ICellRendererParams } from "ag-grid-community";
+import type { ColDef, GridApi, ICellRendererParams } from "ag-grid-community";
 
 // Items in these sub_categories are box-traced — their count is
 // auto-decremented when a freezer box is logged in the Box Trace Log, so
 // the worker doesn't need to manually count them end-of-week. Keep in
 // sync with the Box Trace Log UI's category dropdown.
 const BOX_TRACED_CATEGORIES = ["Empanada", "Dessert"];
+
+// How long an on-device draft of un-submitted counts is kept before it's
+// treated as stale and discarded.
+const DRAFT_MAX_AGE_MS = 12 * 60 * 60 * 1000; // 12 hours
+const EMPTY_DRAFT: Record<string, number> = {};
 
 type Store = {
   id: string;
@@ -96,6 +103,106 @@ export default function StoreStockEntry() {
     [cycles, selectedCycleId],
   );
 
+  // --- Durable, self-healing draft of entered counts -------------------------
+  // THE reliability fix. The old flow saved each count with a single upsert the
+  // instant the worker left a cell; if the session had gone stale (idle tablet,
+  // flaky wifi) that write failed and the code REVERTED the cell — the number
+  // was gone and nothing ever retried it. Now every typed count lands here
+  // first (and in localStorage) and is NEVER discarded on a failed save. A
+  // background flusher keeps re-sending anything still pending — refreshing the
+  // session each time — so a stale session just delays the write a few seconds
+  // instead of losing it.
+  const [draft, setDraft] = useState<{ key: string; values: Record<string, number> }>({
+    key: "",
+    values: {},
+  });
+  const draftKey = useMemo(
+    () =>
+      selectedCycleId && effectiveStoreId
+        ? `lasmuns.draft.stock-entry.v1.${selectedCycleId}.${effectiveStoreId}`
+        : "",
+    [selectedCycleId, effectiveStoreId],
+  );
+  // Only trust draft.values when it belongs to the current (cycle, store).
+  const draftValues = draft.key === draftKey ? draft.values : EMPTY_DRAFT;
+  const pendingCount = Object.keys(draftValues).length;
+  // Mirror for imperative readers (timers, cell styling) outside the render pass.
+  const draftRef = useRef<Record<string, number>>(EMPTY_DRAFT);
+  useEffect(() => {
+    draftRef.current = draftValues;
+  }, [draftValues]);
+  const gridApiRef = useRef<GridApi<StockEntryRow> | null>(null);
+
+  const setDraftValue = useCallback(
+    (itemId: string, count: number | null) => {
+      setDraft((prev) => {
+        const base = prev.key === draftKey ? prev.values : {};
+        const next = { ...base };
+        if (count === null) delete next[itemId];
+        else next[itemId] = count;
+        return { key: draftKey, values: next };
+      });
+    },
+    [draftKey],
+  );
+
+  // Load any saved draft when the (cycle, store) selection changes.
+  useEffect(() => {
+    if (!draftKey) {
+      setDraft({ key: "", values: {} });
+      return;
+    }
+    let restored: Record<string, number> = {};
+    try {
+      const raw = window.localStorage.getItem(draftKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as {
+          savedAt?: number;
+          values?: Record<string, number>;
+        };
+        if (
+          parsed.values &&
+          typeof parsed.savedAt === "number" &&
+          Date.now() - parsed.savedAt <= DRAFT_MAX_AGE_MS
+        ) {
+          restored = parsed.values;
+        } else {
+          window.localStorage.removeItem(draftKey);
+        }
+      }
+    } catch {
+      // Corrupt/blocked storage — start clean.
+    }
+    setDraft({ key: draftKey, values: restored });
+  }, [draftKey]);
+
+  // Mirror the draft to localStorage and flag the app's reload guard so
+  // auto-recovery never reloads on top of un-submitted counts.
+  useEffect(() => {
+    if (!draftKey || draft.key !== draftKey) return;
+    const has = Object.keys(draft.values).length > 0;
+    setUnsaved(draftKey, has);
+    try {
+      if (has) {
+        window.localStorage.setItem(
+          draftKey,
+          JSON.stringify({ savedAt: Date.now(), values: draft.values }),
+        );
+      } else {
+        window.localStorage.removeItem(draftKey);
+      }
+    } catch {
+      // best-effort
+    }
+  }, [draft, draftKey]);
+
+  useEffect(() => () => setUnsaved(draftKey, false), [draftKey]);
+
+  // Repaint the "not submitted" cell highlight when the pending set changes.
+  useEffect(() => {
+    gridApiRef.current?.refreshCells({ force: true });
+  }, [draftValues]);
+
   useEffect(() => {
     if (!isStoreManager) return;
     const loadStores = async () => {
@@ -128,60 +235,107 @@ export default function StoreStockEntry() {
     if (!selectedCycleId || !effectiveStoreId) return;
     setFinishToggling(true);
     setMessage(null);
-    const newValue = finishedAt ? null : new Date().toISOString();
+    const finishing = !finishedAt;
+    const nowIso = finishing ? new Date().toISOString() : null;
 
     try {
-      // When FINISHING, sweep any active grid rows that don't yet have a
-      // stock_entries row and write them at their current grid value
-      // (typically 0). INSERT-only (ON CONFLICT DO NOTHING) so it backfills
-      // untouched rows without ever clobbering a value the worker just saved.
-      if (newValue) {
-        const missing = gridData
-          .filter((r) => r.is_active && !r.has_existing_entry)
-          .map((r) => ({
+      // FINISH = authoritative submit + verify. Push every count that's still
+      // pending, then READ IT BACK and confirm it landed before we ever show
+      // "Finished". If anything is still missing we do NOT finish and we name
+      // it — nothing is lost, the worker just taps Finish again. This is what
+      // makes a green "Finished" actually mean "the database has these numbers"
+      // (the old sweep silently wrote nothing and went green anyway).
+      if (finishing) {
+        const pending = draft.key === draftKey ? draft.values : {};
+        const ids = Object.keys(pending);
+        if (ids.length > 0) {
+          const rows = ids.map((item_id) => ({
             cycle_id: selectedCycleId,
             store_id: effectiveStoreId,
-            item_id: r.item_id,
-            current_count: r.current_count,
+            item_id,
+            current_count: pending[item_id],
             entered_by: session?.user?.email ?? session?.user?.id ?? null,
           }));
-        // Write in chunks so a store with a large catalog can't stall the
-        // whole finish on one oversized request.
-        const CHUNK = 100;
-        for (let i = 0; i < missing.length; i += CHUNK) {
-          const { error: upsertErr } = await supabase
-            .from("stock_entries")
-            .upsert(missing.slice(i, i + CHUNK), {
-              onConflict: "cycle_id,store_id,item_id",
-              ignoreDuplicates: true,
-            });
-          if (upsertErr) {
-            setMessage(upsertErr.message);
-            return;
+          const CHUNK = 100;
+          for (let i = 0; i < rows.length; i += CHUNK) {
+            const slice = rows.slice(i, i + CHUNK);
+            let { error } = await withTimeout(
+              supabase
+                .from("stock_entries")
+                .upsert(slice, { onConflict: "cycle_id,store_id,item_id" }),
+              "Submitting counts",
+            );
+            if (error) {
+              await supabase.auth.getSession();
+              ({ error } = await withTimeout(
+                supabase
+                  .from("stock_entries")
+                  .upsert(slice, { onConflict: "cycle_id,store_id,item_id" }),
+                "Submitting counts",
+              ));
+            }
+            if (error) throw new Error(error.message);
           }
+
+          // Verify the write actually landed for every pending item.
+          const { data: check, error: checkErr } = await withTimeout(
+            supabase
+              .from("stock_entries")
+              .select("item_id,current_count")
+              .eq("cycle_id", selectedCycleId)
+              .eq("store_id", effectiveStoreId)
+              .in("item_id", ids),
+            "Verifying counts",
+          );
+          if (checkErr) throw new Error(checkErr.message);
+          const saved = new Map(
+            ((check as Array<{ item_id: string; current_count: number }>) ?? []).map(
+              (r) => [r.item_id, r.current_count],
+            ),
+          );
+          const notSaved = ids.filter((id) => saved.get(id) !== pending[id]);
+          if (notSaved.length > 0) {
+            const names = notSaved
+              .map((id) => gridData.find((r) => r.item_id === id)?.item_name ?? id)
+              .slice(0, 8);
+            setMessage(
+              `Couldn't submit ${notSaved.length} item(s): ${names.join(", ")}${
+                notSaved.length > names.length ? "…" : ""
+              }. Your entries are kept on this device — check the connection and tap Finish again.`,
+            );
+            return; // stay UN-finished; nothing lost
+          }
+
+          // All confirmed — clear the pending draft.
+          lastLocalWriteRef.current = Date.now();
+          setDraft({ key: draftKey, values: {} });
         }
-        lastLocalWriteRef.current = Date.now();
       }
 
-      const { error } = await supabase
-        .from("cycle_stores")
-        .update({ finished_at: newValue })
-        .eq("cycle_id", selectedCycleId)
-        .eq("store_id", effectiveStoreId);
+      const { error } = await withTimeout(
+        supabase
+          .from("cycle_stores")
+          .update({ finished_at: nowIso })
+          .eq("cycle_id", selectedCycleId)
+          .eq("store_id", effectiveStoreId),
+        "Updating status",
+      );
       if (error) {
         setMessage(error.message);
         return;
       }
-      setFinishedAt(newValue);
-      setMessage(newValue ? "Marked as finished." : "Reopened for editing.");
-      // Reconcile in the background — don't block the button (and its
-      // finally-reset) on a refetch that could stall.
-      if (newValue) void loadEntries();
+      setFinishedAt(nowIso);
+      setMessage(
+        finishing
+          ? "Finished — all counts submitted and confirmed."
+          : "Reopened for editing.",
+      );
+      if (finishing) void loadEntries();
     } catch (err) {
       setMessage(
         err instanceof Error
-          ? `Couldn't update: ${err.message}`
-          : "Couldn't update (network timeout). Try again.",
+          ? `Couldn't finish: ${err.message} Your entries are safe on this device — try again.`
+          : "Couldn't finish (network). Your entries are safe on this device — try again.",
       );
     } finally {
       setFinishToggling(false);
@@ -339,6 +493,78 @@ export default function StoreStockEntry() {
     `store-${effectiveStoreId}-cycle-${selectedCycleId}-entries`,
   );
 
+  // Background flusher: re-send anything still pending until it lands. Runs on a
+  // short interval and whenever the tablet regains focus (right when a stale
+  // session is most likely — e.g. waking from sleep). It refreshes the session
+  // first, then upserts; confirmed items leave the draft, failures stay for the
+  // next tick. This is what turns "stale session ate my numbers" into "the
+  // numbers show up a few seconds later on their own".
+  const flushingRef = useRef(false);
+  const flushPending = useCallback(async () => {
+    if (!selectedCycleId || !effectiveStoreId || flushingRef.current) return;
+    const snapshot = { ...draftRef.current };
+    const ids = Object.keys(snapshot);
+    if (ids.length === 0) return;
+    flushingRef.current = true;
+    let anyFlushed = false;
+    try {
+      // A stale token is the usual reason a count didn't reach the DB — make
+      // sure it's live before trying. Bounded so it can't hang.
+      try {
+        await withTimeout(supabase.auth.getSession(), "Session refresh", 15_000);
+      } catch {
+        // proceed anyway; the write below is also bounded
+      }
+      const rows = ids.map((item_id) => ({
+        cycle_id: selectedCycleId,
+        store_id: effectiveStoreId,
+        item_id,
+        current_count: snapshot[item_id],
+        entered_by: session?.user?.email ?? session?.user?.id ?? null,
+      }));
+      const CHUNK = 100;
+      for (let i = 0; i < rows.length; i += CHUNK) {
+        const slice = rows.slice(i, i + CHUNK);
+        const { error } = await withTimeout(
+          supabase
+            .from("stock_entries")
+            .upsert(slice, { onConflict: "cycle_id,store_id,item_id" }),
+          "Saving counts",
+        );
+        if (error) continue; // leave pending; retry next tick
+        anyFlushed = true;
+        lastLocalWriteRef.current = Date.now();
+        setDraft((prev) => {
+          if (prev.key !== draftKey) return prev;
+          const next = { ...prev.values };
+          for (const r of slice) {
+            // Only clear if the worker hasn't re-typed it since our snapshot.
+            if (next[r.item_id] === snapshot[r.item_id]) delete next[r.item_id];
+          }
+          return { key: draftKey, values: next };
+        });
+      }
+    } finally {
+      flushingRef.current = false;
+    }
+    // Pull the now-saved values back so dropping the draft overlay doesn't
+    // momentarily reveal the old seeded number.
+    if (anyFlushed) void loadEntries();
+  }, [selectedCycleId, effectiveStoreId, draftKey, session, loadEntries]);
+
+  useEffect(() => {
+    if (!draftKey) return;
+    const flush = () => void flushPending();
+    const timer = window.setInterval(flush, 20_000);
+    window.addEventListener("focus", flush);
+    document.addEventListener("visibilitychange", flush);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", flush);
+      document.removeEventListener("visibilitychange", flush);
+    };
+  }, [draftKey, flushPending]);
+
   // Auto-select the "most recent open cycle". We prefer the cycle whose
   // order_date is closest to today AND not delivered AND not more than a
   // year out (so stray test cycles with far-future dates don't trap
@@ -400,7 +626,10 @@ export default function StoreStockEntry() {
           item_id: storeItem.item_id,
           item_name: storeItem.items?.name || storeItem.item_id,
           capacity: storeItem.capacity,
-          current_count: existingEntry?.current_count || 0,
+          // Overlay any un-submitted draft value so a realtime refetch or a
+          // reload can't hide what the worker just typed.
+          current_count:
+            draftValues[storeItem.item_id] ?? existingEntry?.current_count ?? 0,
           is_active: storeItem.is_active,
           has_existing_entry: !!existingEntry,
           sub_category,
@@ -414,75 +643,79 @@ export default function StoreStockEntry() {
     gridRows.sort((a, b) => (a.sub_category || "").localeCompare(b.sub_category || ""));
 
     setGridData(gridRows);
-  }, [selectedCycleId, storeItems, entries, effectiveStoreId, priorEntryItemIds]);
+  }, [selectedCycleId, storeItems, entries, effectiveStoreId, priorEntryItemIds, draftValues]);
 
   const handleCellValueChanged = async (params: any) => {
     if (!selectedCycleId || !effectiveStoreId) return;
 
     const { data, colDef, newValue, oldValue } = params;
-
     if (newValue === oldValue) return;
+    if (colDef.field !== "current_count") return;
 
-    setLoading(true);
+    const countValue = parseInt(newValue, 10);
+    if (Number.isNaN(countValue) || countValue < 0) {
+      setMessage("Please enter a valid stock count.");
+      // Genuinely invalid input — this is the ONLY case we revert the cell.
+      params.node.setDataValue(colDef.field, oldValue);
+      return;
+    }
+
+    // 1) Record it durably BEFORE any network call. From here it cannot be lost:
+    //    it's on screen, in the draft, and mirrored to localStorage, and the
+    //    background flusher will keep retrying until it reaches the database.
+    setDraftValue(data.item_id, countValue);
     setMessage(null);
 
+    // 2) Best-effort immediate save — refresh the session and retry once if the
+    //    first attempt fails (the classic stale-session case). On success drop
+    //    it from the pending draft; on failure KEEP it (never revert) and let
+    //    the flusher take over.
+    setLoading(true);
+    const payload = {
+      cycle_id: selectedCycleId,
+      store_id: effectiveStoreId,
+      item_id: data.item_id,
+      current_count: countValue,
+      entered_by: session?.user?.email ?? session?.user?.id,
+    };
     try {
-      if (colDef.field === "current_count") {
-        const countValue = parseInt(newValue, 10);
-        if (Number.isNaN(countValue) || countValue < 0) {
-          setMessage("Please enter a valid stock count.");
-          // Revert the change
-          params.node.setDataValue(colDef.field, oldValue);
-          setLoading(false);
-          return;
-        }
-
-        const payload = {
-          cycle_id: selectedCycleId,
-          store_id: effectiveStoreId,
-          item_id: data.item_id,
-          current_count: countValue,
-          entered_by: session?.user?.email ?? session?.user?.id,
-        };
-
-        let { error } = await supabase
+      let { error } = await withTimeout(
+        supabase
           .from("stock_entries")
-          .upsert([payload], { onConflict: "cycle_id,store_id,item_id" });
-
-        // A failure here reverts the cell (see catch), erasing what the worker
-        // just typed. The usual cause is a token that expired while the app sat
-        // idle. Refresh the session and retry once before giving up so a stale
-        // session can't wipe the count.
-        if (error) {
-          await supabase.auth.getSession();
-          ({ error } = await supabase
+          .upsert([payload], { onConflict: "cycle_id,store_id,item_id" }),
+        "Saving count",
+      );
+      if (error) {
+        await supabase.auth.getSession();
+        ({ error } = await withTimeout(
+          supabase
             .from("stock_entries")
-            .upsert([payload], { onConflict: "cycle_id,store_id,item_id" }));
-        }
-
-        if (error) throw error;
-
-        // Mark this as our own write so the realtime subscription doesn't
-        // refetch and rebuild the grid out from under the next cell edit.
-        lastLocalWriteRef.current = Date.now();
-        setMessage("Stock count updated successfully.");
-
-        // Update local entries state
-        const newEntry: StockEntry = {
-          ...payload,
-          entered_at: new Date().toISOString(),
-          items: { name: data.item_name },
-        };
-
-        setEntries(prev => {
-          const filtered = prev.filter(e => !(e.cycle_id === selectedCycleId && e.item_id === data.item_id));
-          return [newEntry, ...filtered];
-        });
+            .upsert([payload], { onConflict: "cycle_id,store_id,item_id" }),
+          "Saving count",
+        ));
       }
-    } catch (error: any) {
-      setMessage(error.message);
-      // Revert the change
-      params.node.setDataValue(colDef.field, oldValue);
+      if (error) throw error;
+
+      lastLocalWriteRef.current = Date.now();
+      setDraftValue(data.item_id, null);
+      setEntries((prev) => {
+        const filtered = prev.filter(
+          (e) => !(e.cycle_id === selectedCycleId && e.item_id === data.item_id),
+        );
+        return [
+          {
+            ...payload,
+            entered_at: new Date().toISOString(),
+            items: { name: data.item_name },
+          },
+          ...filtered,
+        ];
+      });
+      setMessage("Saved.");
+    } catch {
+      // Didn't go through — but it's safe in the draft (shown amber). The
+      // flusher keeps retrying, and Finish won't go green until it's really in.
+      setMessage("Entered — waiting to sync (kept safe on this device).");
     } finally {
       setLoading(false);
     }
@@ -518,7 +751,12 @@ export default function StoreStockEntry() {
       cellEditor: "agNumberCellEditor",
       cellEditorParams: { min: 0 },
       cellStyle: (params) => ({
-        backgroundColor: params.data?.has_existing_entry ? '#1f2937' : '#374151',
+        backgroundColor:
+          draftRef.current[params.data?.item_id ?? ""] !== undefined
+            ? "#78350f" // amber-900: entered on this device, not yet confirmed saved
+            : params.data?.has_existing_entry
+              ? "#1f2937"
+              : "#374151",
       }),
       cellRenderer: (params: ICellRendererParams<StockEntryRow>) => {
         const row = params.data;
@@ -676,13 +914,24 @@ export default function StoreStockEntry() {
                 }`}
               >
                 {finishToggling
-                  ? "Saving..."
+                  ? "Submitting…"
                   : finishedAt
                     ? "Finished ✓ — click to reopen"
-                    : "Mark as finished"}
+                    : pendingCount > 0
+                      ? `Finish & submit (${pendingCount})`
+                      : "Mark as finished"}
               </button>
             )}
           </div>
+
+          {pendingCount > 0 && (
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+              ⚠ {pendingCount} count{pendingCount === 1 ? "" : "s"} entered but not
+              yet confirmed in the system. Amber rows are saved on this device and
+              are re-sending automatically — they&apos;ll clear once they land. You
+              can also tap <strong>Finish &amp; submit</strong> to send them now.
+            </div>
+          )}
 
           {message && <p className="text-sm text-cyan-300">{message}</p>}
 
@@ -700,6 +949,9 @@ export default function StoreStockEntry() {
                 filter: true,
                 minWidth: 80,
               }}
+              onGridReady={(e) => {
+                gridApiRef.current = e.api;
+              }}
               onCellValueChanged={handleCellValueChanged}
               stopEditingWhenCellsLoseFocus={true}
             />
@@ -710,8 +962,8 @@ export default function StoreStockEntry() {
             <ul className="list-disc list-inside mt-2 space-y-1">
               <li>Select an order cycle from the dropdown above</li>
               <li>Click on "Current Count" or "Order Date" cells to edit values</li>
-              <li>Changes are saved automatically when you finish editing a cell</li>
-              <li>Cells with darker backgrounds already have saved entries</li>
+              <li>Counts save as you go — and are kept safe on this device if the connection drops, then sent automatically</li>
+              <li>Amber cells are entered but not yet confirmed saved; they clear on their own once they land</li>
               <li>Only active items for your store are shown</li>
             </ul>
           </div>
