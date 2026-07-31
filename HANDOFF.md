@@ -80,6 +80,10 @@ Most businesses should choose **Model A**.
 
 ## 4. Transfer checklist (Model A)
 
+> **Non-technical? Use [`TRANSFER-GUIDE.md`](TRANSFER-GUIDE.md)** — the same
+> transfers written out click-by-click in plain English, with who-does-what
+> labelled. The checklist below is the condensed version.
+
 Do these in order. Each is done in that service's website (dashboard), by
 someone logged in as the current owner.
 

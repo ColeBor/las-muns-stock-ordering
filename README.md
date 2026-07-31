@@ -11,9 +11,12 @@ and staff requests. Runs on Android tablets as an installable PWA.
 ## 📋 New owner or maintainer? Start here → [HANDOFF.md](HANDOFF.md)
 
 `HANDOFF.md` is the full ownership-transfer and operations runbook: the accounts
-the app depends on, how to transfer them, which secrets to rotate, how to run and
-deploy, the database migrations, scheduled jobs, and known quirks. **Read it
-before doing anything else.**
+the app depends on, how to transfer them, how to run and deploy, the database
+migrations, scheduled jobs, and known quirks. **Read it before doing anything
+else.**
+
+Just need to move the accounts into the company's name? **[TRANSFER-GUIDE.md](TRANSFER-GUIDE.md)**
+is a plain-English, click-by-click walkthrough for that part.
 
 ## Quick start (developer)
 
